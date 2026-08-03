@@ -115,41 +115,11 @@ export function normalizeText(input: string) {
 }
 
 export function getItemConditionText(item: Item) {
-  return item.conditionText?.trim() || inferConditionText(item.title);
+  return item.conditionText?.trim() || "";
 }
 
 export function getItemConditionValue(item: Item) {
   return normalizeConditionValue(getItemConditionText(item));
-}
-
-export function inferConditionText(title: string) {
-  const normalized = normalizeText(title);
-
-  if (/未使用に近/.test(normalized)) {
-    return "未使用に近い";
-  }
-
-  if (/未使用|新品|未開封/.test(normalized)) {
-    return "未使用";
-  }
-
-  if (/目立った傷|美品|良品|画面無傷|ヤケなし/.test(normalized)) {
-    return "目立った傷や汚れなし";
-  }
-
-  if (/ジャンク|状態が悪|動作未確認|現状品|画面映らず|通電のみ/.test(normalized)) {
-    return "全体的に状態が悪い";
-  }
-
-  if (/傷や汚れあり/.test(normalized) && !/やや傷/.test(normalized)) {
-    return "傷や汚れあり";
-  }
-
-  if (/やや傷|小傷|キズあり|傷あり|汚れあり/.test(normalized)) {
-    return "やや傷や汚れあり";
-  }
-
-  return "中古";
 }
 
 export function getEstimatedEndDate(item: Item) {

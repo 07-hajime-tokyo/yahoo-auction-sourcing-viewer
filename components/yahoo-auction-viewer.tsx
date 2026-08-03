@@ -138,8 +138,15 @@ export function YahooAuctionViewer() {
   }, [selectedSheet, refreshKey]);
 
   const rawItems = itemsResponse?.items ?? [];
+  const hasConditionData = rawItems.some((item) => Boolean(item.conditionText?.trim()));
   const filtered = useMemo(() => filterAndSortItems(rawItems, filters), [rawItems, filters]);
   const totalCount = itemsResponse?.count ?? rawItems.length;
+
+  useEffect(() => {
+    if (!hasConditionData && filters.conditions.length > 0) {
+      updateQuery({ condition: null });
+    }
+  }, [filters.conditions.length, hasConditionData, updateQuery]);
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
@@ -273,6 +280,7 @@ export function YahooAuctionViewer() {
           <ConditionFilter
             selectedConditions={filters.conditions}
             onToggle={handleConditionToggle}
+            disabled={!hasConditionData}
           />
 
           <FilterField label="入札数の上限">
@@ -396,31 +404,56 @@ function FilterField({ label, children }: { label: string; children: React.React
 function ConditionFilter({
   selectedConditions,
   onToggle,
+  disabled,
 }: {
   selectedConditions: ConditionOption[];
   onToggle: (value: ConditionOption, checked: boolean) => void;
+  disabled: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const selectedCount = disabled ? 0 : selectedConditions.length;
+
   return (
     <div className="col-span-2 rounded-[8px] border border-border bg-panel p-2 xl:col-span-2">
-      <div className="flex items-center justify-between text-xs font-semibold text-text">
-        <span>商品の状態</span>
-        <span aria-hidden="true" className="text-muted">
-          ^
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between text-left text-xs font-semibold text-text"
+      >
+        <span className="flex items-center gap-2">
+          商品の状態
+          {selectedCount > 0 ? (
+            <span className="rounded-[8px] border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+              {selectedCount}
+            </span>
+          ) : null}
         </span>
-      </div>
-      <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-1">
+        <span aria-hidden="true" className="text-muted">
+          {open ? "⌃" : "⌄"}
+        </span>
+      </button>
+      {open && disabled ? <div className="mt-1 text-[11px] text-muted">状態データ未取得</div> : null}
+      <div
+        className={[
+          open ? "mt-2 grid" : "hidden",
+          "grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-1",
+        ].join(" ")}
+      >
         {CONDITION_OPTIONS.map((option) => (
           <label
             key={option.value}
             className={[
               "flex min-h-6 items-center gap-2 text-xs text-text",
               option.group === "used" ? "pl-4" : "",
+              disabled ? "opacity-45" : "",
             ].join(" ")}
           >
             <input
-              checked={selectedConditions.includes(option.value)}
+              checked={!disabled && selectedConditions.includes(option.value)}
               onChange={(event) => onToggle(option.value, event.target.checked)}
               type="checkbox"
+              disabled={disabled}
               className="h-4 w-4 shrink-0 accent-accent"
             />
             <span className="min-w-0 leading-4">{option.label}</span>
