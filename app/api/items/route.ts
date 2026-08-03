@@ -19,19 +19,7 @@ export async function GET(request: NextRequest) {
 
   try {
     if (!hasGasConfig()) {
-      let sheetResponse: ItemsResponse;
-
-      try {
-        sheetResponse = await fetchGoogleSheetItems(sheet);
-      } catch {
-        return NextResponse.json(getMockItems(sheet));
-      }
-
-      if (!sheetResponse.ok) {
-        return NextResponse.json({ error: sheetResponse.error }, { status: 502 });
-      }
-
-      return NextResponse.json(sheetResponse);
+      return NextResponse.json(await getFallbackItems(sheet));
     }
 
     const upstream = await fetchGasJson<ItemsResponse>({
@@ -46,18 +34,36 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return NextResponse.json(upstream);
-  } catch (error) {
-    try {
-      const sheetResponse = await fetchGoogleSheetItems(sheet);
-
-      if (sheetResponse.ok) {
-        return NextResponse.json(sheetResponse);
-      }
-    } catch {
-      // Fall through to the bundled snapshot when the live fallback is not readable.
+    if (!isValidItemsPayload(upstream)) {
+      return NextResponse.json(await getFallbackItems(sheet));
     }
 
-    return NextResponse.json(getMockItems(sheet));
+    return NextResponse.json(upstream);
+  } catch (error) {
+    return NextResponse.json(await getFallbackItems(sheet));
   }
+}
+
+async function getFallbackItems(sheet?: string): Promise<ItemsResponse> {
+  try {
+    const sheetResponse = await fetchGoogleSheetItems(sheet);
+
+    if (sheetResponse.ok) {
+      return sheetResponse;
+    }
+  } catch {
+    // Fall through to the bundled snapshot when the live fallback is not readable.
+  }
+
+  return getMockItems(sheet);
+}
+
+function isValidItemsPayload(response: ItemsResponse) {
+  return (
+    response.ok &&
+    typeof response.sheet === "string" &&
+    typeof response.count === "number" &&
+    typeof response.generatedAt === "string" &&
+    Array.isArray(response.items)
+  );
 }
