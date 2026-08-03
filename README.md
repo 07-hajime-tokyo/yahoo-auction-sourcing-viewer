@@ -61,7 +61,7 @@ GOOGLE_SHEET_CSV_URL=
 - `sheet`: シート名
 - `maxTotal`: 仕入れ上限
 - `minTotal`: 価格下限
-- `hours`: `6` / `24` / `72`
+- `hours`: `6` / `24` / `48` / `72`
 - `maxBids`: 入札数の上限
 - `exclude`: 除外キーワード
 - `include`: 含むキーワード

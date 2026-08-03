@@ -12,6 +12,7 @@ export const TIME_OPTIONS = [
   { value: "all", label: "すべて", hours: null },
   { value: "6", label: "6時間以内", hours: 6 },
   { value: "24", label: "24時間以内", hours: 24 },
+  { value: "48", label: "2日以内", hours: 48 },
   { value: "72", label: "3日以内", hours: 72 },
 ] as const;
 
