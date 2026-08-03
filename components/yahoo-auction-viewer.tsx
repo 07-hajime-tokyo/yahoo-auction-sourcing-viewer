@@ -277,12 +277,6 @@ export function YahooAuctionViewer() {
             </select>
           </FilterField>
 
-          <ConditionFilter
-            selectedConditions={filters.conditions}
-            onToggle={handleConditionToggle}
-            disabled={!hasConditionData}
-          />
-
           <FilterField label="入札数の上限">
             <input
               value={filters.maxBids}
@@ -355,6 +349,12 @@ export function YahooAuctionViewer() {
           </div>
         </div>
 
+        <ConditionFilter
+          selectedConditions={filters.conditions}
+          onToggle={handleConditionToggle}
+          disabled={!hasConditionData}
+        />
+
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-xs text-muted">
             送料未定の商品は上限を通過しやすいため、カード上で明示しています。
@@ -410,11 +410,11 @@ function ConditionFilter({
   onToggle: (value: ConditionOption, checked: boolean) => void;
   disabled: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const selectedCount = disabled ? 0 : selectedConditions.length;
 
   return (
-    <div className="col-span-2 rounded-[8px] border border-border bg-panel p-2 xl:col-span-2">
+    <div className="mt-2 rounded-[8px] border border-border bg-panel p-2">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -423,6 +423,9 @@ function ConditionFilter({
       >
         <span className="flex items-center gap-2">
           商品の状態
+          <span className="rounded-[8px] border border-border bg-base px-1.5 py-0.5 text-[10px] font-normal text-muted">
+            絞り込み
+          </span>
           {selectedCount > 0 ? (
             <span className="rounded-[8px] border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
               {selectedCount}
@@ -437,7 +440,7 @@ function ConditionFilter({
       <div
         className={[
           open ? "mt-2 grid" : "hidden",
-          "grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-1",
+          "grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7",
         ].join(" ")}
       >
         {CONDITION_OPTIONS.map((option) => (
