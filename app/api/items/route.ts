@@ -19,7 +19,13 @@ export async function GET(request: NextRequest) {
 
   try {
     if (!hasGasConfig()) {
-      const sheetResponse = await fetchGoogleSheetItems(sheet);
+      let sheetResponse: ItemsResponse;
+
+      try {
+        sheetResponse = await fetchGoogleSheetItems(sheet);
+      } catch {
+        return NextResponse.json(getMockItems(sheet));
+      }
 
       if (!sheetResponse.ok) {
         return NextResponse.json({ error: sheetResponse.error }, { status: 502 });

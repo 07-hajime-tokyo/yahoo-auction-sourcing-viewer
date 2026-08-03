@@ -16,12 +16,14 @@ npm run dev
 
 1. `GAS_API_URL` がある場合: GAS WebApp JSON APIを使用
 2. `GAS_API_URL` が無い場合: Google Sheets CSVを使用
-3. どちらも無い場合: `mock/items.json` を使用
+3. Google Sheets CSVが読めない、または設定が無い場合: `mock/items.json` を使用
 
 このリポジトリでは、既定のGoogle Sheetとして次を組み込んでいます。
 
 - Spreadsheet ID: `1nXVUKaGbNDDrZp-n4Vl-fK4qU_7TC5yKFYY3ghArItw`
 - Sheet tab: `リペア`
+
+`mock/items.json` には上記シートから取り込んだスナップショットを同梱しています。非公開シートのままVercelからCSV取得できない場合でも、このスナップショットで一覧表示できます。最新データへ自動更新したい場合は、`GAS_API_URL` を設定するか、Vercelから読める公開CSV URLを `GOOGLE_SHEET_CSV_URL` に設定してください。
 
 ## 環境変数
 

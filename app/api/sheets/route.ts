@@ -13,7 +13,13 @@ export async function GET() {
 
   try {
     if (!hasGasConfig()) {
-      const sheetResponse = await fetchGoogleSheetSheets();
+      let sheetResponse: SheetsResponse;
+
+      try {
+        sheetResponse = await fetchGoogleSheetSheets();
+      } catch {
+        return NextResponse.json(getMockSheets());
+      }
 
       if (!sheetResponse.ok) {
         return NextResponse.json({ error: sheetResponse.error }, { status: 502 });

@@ -9,3 +9,5 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 work/.npm-cache/
 work/dev-server*.log
+work/*.csv
+work/*.xlsx
