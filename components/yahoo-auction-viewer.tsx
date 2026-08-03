@@ -138,15 +138,9 @@ export function YahooAuctionViewer() {
   }, [selectedSheet, refreshKey]);
 
   const rawItems = itemsResponse?.items ?? [];
-  const hasConditionData = rawItems.some((item) => Boolean(item.conditionText?.trim()));
-  const filtered = useMemo(() => filterAndSortItems(rawItems, filters), [rawItems, filters]);
-  const totalCount = itemsResponse?.count ?? rawItems.length;
-
-  useEffect(() => {
-    if (!hasConditionData && filters.conditions.length > 0) {
-      updateQuery({ condition: null });
-    }
-  }, [filters.conditions.length, hasConditionData, updateQuery]);
+  const visibleItems = useMemo(() => rawItems.filter((item) => !isProbablyEnded(item)), [rawItems]);
+  const filtered = useMemo(() => filterAndSortItems(visibleItems, filters), [visibleItems, filters]);
+  const totalCount = visibleItems.length;
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
@@ -166,7 +160,6 @@ export function YahooAuctionViewer() {
       include: null,
       excludeFlea: "0",
       unknownShipping: null,
-      condition: null,
       sort: null,
     });
   }
@@ -349,10 +342,9 @@ export function YahooAuctionViewer() {
           </div>
         </div>
 
-        <ConditionFilter
+        <ConditionChecklist
           selectedConditions={filters.conditions}
           onToggle={handleConditionToggle}
-          disabled={!hasConditionData}
         />
 
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -378,7 +370,7 @@ export function YahooAuctionViewer() {
       {itemsState === "loading" && rawItems.length === 0 ? <LoadingGrid /> : null}
 
       {itemsState !== "loading" && filtered.items.length === 0 ? (
-        <EmptyState totalCount={rawItems.length} breakdown={filtered.breakdown} />
+        <EmptyState totalCount={visibleItems.length} breakdown={filtered.breakdown} />
       ) : null}
 
       {filtered.items.length > 0 ? (
@@ -401,17 +393,15 @@ function FilterField({ label, children }: { label: string; children: React.React
   );
 }
 
-function ConditionFilter({
+function ConditionChecklist({
   selectedConditions,
   onToggle,
-  disabled,
 }: {
   selectedConditions: ConditionOption[];
   onToggle: (value: ConditionOption, checked: boolean) => void;
-  disabled: boolean;
 }) {
   const [open, setOpen] = useState(true);
-  const selectedCount = disabled ? 0 : selectedConditions.length;
+  const selectedCount = selectedConditions.length;
 
   return (
     <div className="mt-2 rounded-[8px] border border-border bg-panel p-2">
@@ -423,9 +413,6 @@ function ConditionFilter({
       >
         <span className="flex items-center gap-2">
           商品の状態
-          <span className="rounded-[8px] border border-border bg-base px-1.5 py-0.5 text-[10px] font-normal text-muted">
-            絞り込み
-          </span>
           {selectedCount > 0 ? (
             <span className="rounded-[8px] border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
               {selectedCount}
@@ -436,28 +423,25 @@ function ConditionFilter({
           {open ? "⌃" : "⌄"}
         </span>
       </button>
-      {open && disabled ? <div className="mt-1 text-[11px] text-muted">状態データ未取得</div> : null}
       <div
         className={[
-          open ? "mt-2 grid" : "hidden",
-          "grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7",
+          open ? "mt-2 flex" : "hidden",
+          "flex-wrap gap-x-5 gap-y-1",
         ].join(" ")}
       >
         {CONDITION_OPTIONS.map((option) => (
           <label
             key={option.value}
             className={[
-              "flex min-h-6 items-center gap-2 text-xs text-text",
-              option.group === "used" ? "pl-4" : "",
-              disabled ? "opacity-45" : "",
+              "flex min-h-5 items-center gap-1.5 whitespace-nowrap text-xs text-text",
+              option.group === "used" ? "ml-2" : "",
             ].join(" ")}
           >
             <input
-              checked={!disabled && selectedConditions.includes(option.value)}
+              checked={selectedConditions.includes(option.value)}
               onChange={(event) => onToggle(option.value, event.target.checked)}
               type="checkbox"
-              disabled={disabled}
-              className="h-4 w-4 shrink-0 accent-accent"
+              className="h-3.5 w-3.5 shrink-0 accent-accent"
             />
             <span className="min-w-0 leading-4">{option.label}</span>
           </label>

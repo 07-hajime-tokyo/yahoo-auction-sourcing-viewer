@@ -118,10 +118,6 @@ export function getItemConditionText(item: Item) {
   return item.conditionText?.trim() || "";
 }
 
-export function getItemConditionValue(item: Item) {
-  return normalizeConditionValue(getItemConditionText(item));
-}
-
 export function getEstimatedEndDate(item: Item) {
   if (!item.fetchedAt || item.endsInHours === null) {
     return null;
@@ -137,6 +133,10 @@ export function getEstimatedEndDate(item: Item) {
 }
 
 export function isProbablyEnded(item: Item, now = new Date()) {
+  if (/終了/.test(normalizeText(item.endTimeText))) {
+    return true;
+  }
+
   const estimatedEndDate = getEstimatedEndDate(item);
 
   if (!estimatedEndDate) {
@@ -153,7 +153,6 @@ function getFilterSteps(filters: Filters) {
   const timeLimit = TIME_OPTIONS.find((option) => option.value === filters.timeLimit)?.hours ?? null;
   const excludeKeywords = splitKeywords(filters.excludeKeywords);
   const includeKeywords = splitKeywords(filters.includeKeywords);
-  const selectedConditions = filters.conditions;
 
   return [
     {
@@ -201,11 +200,6 @@ function getFilterSteps(filters: Filters) {
       label: "送料未定除外",
       active: filters.excludeUnknownShipping,
       passes: (item: Item) => item.shippingFee !== null,
-    },
-    {
-      label: "商品の状態",
-      active: selectedConditions.length > 0,
-      passes: (item: Item) => conditionMatches(item, selectedConditions),
     },
   ];
 }
@@ -256,62 +250,6 @@ function normalizeConditionOptions(value: string | null): ConditionOption[] {
   return CONDITION_OPTIONS.filter((option) => selected.has(option.value)).map(
     (option) => option.value,
   );
-}
-
-function normalizeConditionValue(value: string): ConditionOption | null {
-  const normalized = normalizeText(value);
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (/未使用に近/.test(normalized)) {
-    return "likeNew";
-  }
-
-  if (/未使用|新品|未開封/.test(normalized)) {
-    return "unused";
-  }
-
-  if (/目立った傷|汚れなし|美品|良品|画面無傷|ヤケなし/.test(normalized)) {
-    return "good";
-  }
-
-  if (/全体的に状態が悪|状態が悪|ジャンク|動作未確認|現状品|画面映らず|通電のみ/.test(
-    normalized,
-  )) {
-    return "poor";
-  }
-
-  if (/傷や汚れあり/.test(normalized) && !/やや傷/.test(normalized)) {
-    return "damaged";
-  }
-
-  if (/やや傷|小傷|キズあり|傷あり|汚れあり/.test(normalized)) {
-    return "fair";
-  }
-
-  if (/中古/.test(normalized)) {
-    return "used";
-  }
-
-  return null;
-}
-
-function conditionMatches(item: Item, selectedConditions: ConditionOption[]) {
-  const condition = getItemConditionValue(item);
-
-  if (!condition) {
-    return false;
-  }
-
-  return selectedConditions.some((selectedCondition) => {
-    if (selectedCondition === condition) {
-      return true;
-    }
-
-    return selectedCondition === "used" && condition !== "unused";
-  });
 }
 
 function sortItems(items: Item[], sort: SortOption) {

@@ -25,7 +25,9 @@ npm run dev
 
 `mock/items.json` には上記シートから取り込んだスナップショットを同梱しています。非公開シートのままVercelからCSV取得できない場合でも、このスナップショットで一覧表示できます。最新データへ自動更新したい場合は、`GAS_API_URL` を設定するか、Vercelから読める公開CSV URLを `GOOGLE_SHEET_CSV_URL` に設定してください。
 
-商品の状態フィルタとカード上の状態表示は、上流データに `conditionText` / `condition` / `商品の状態` / `状態` / `コンディション` のいずれかの列がある場合だけ有効です。タイトルから状態を推測する処理は入れていません。
+商品の状態欄は、表示中データに含まれるコンディションを手動でメモするためのチェックリストです。チェック状態はURLに残りますが、商品一覧の絞り込みには使いません。カード上の状態表示は、上流データに `conditionText` / `condition` / `商品の状態` / `状態` / `コンディション` のいずれかの列がある場合だけ表示します。タイトルから状態を推測する処理は入れていません。
+
+`endTimeText` が `終了` の商品、または `fetchedAt + endsInHours` から終了済みと推定できる商品は一覧に表示しません。
 
 ## 環境変数
 
@@ -65,7 +67,7 @@ GOOGLE_SHEET_CSV_URL=
 - `minTotal`: 価格下限
 - `hours`: `6` / `24` / `48` / `72`
 - `maxBids`: 入札数の上限
-- `condition`: 商品の状態。上流に状態列がある場合だけ有効です。`unused` / `used` / `likeNew` / `good` / `fair` / `damaged` / `poor` をカンマ区切りで指定
+- `condition`: 商品の状態チェック欄。表示件数には影響しません。`unused` / `used` / `likeNew` / `good` / `fair` / `damaged` / `poor` をカンマ区切りで指定
 - `exclude`: 除外キーワード
 - `include`: 含むキーワード
 - `excludeFlea`: `0` のときフリマを含めます。既定では除外します。
