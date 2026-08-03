@@ -16,6 +16,16 @@ export const TIME_OPTIONS = [
   { value: "72", label: "3日以内", hours: 72 },
 ] as const;
 
+export const CONDITION_OPTIONS = [
+  { value: "unused", label: "未使用", group: "root" },
+  { value: "used", label: "中古", group: "root" },
+  { value: "likeNew", label: "未使用に近い", group: "used" },
+  { value: "good", label: "目立った傷や汚れなし", group: "used" },
+  { value: "fair", label: "やや傷や汚れあり", group: "used" },
+  { value: "damaged", label: "傷や汚れあり", group: "used" },
+  { value: "poor", label: "全体的に状態が悪い", group: "used" },
+] as const;
+
 export const SORT_OPTIONS = [
   { value: "totalAsc", label: "総額が安い順" },
   { value: "endsSoon", label: "残り時間が短い順" },
@@ -25,6 +35,7 @@ export const SORT_OPTIONS = [
 
 export type TimeOption = (typeof TIME_OPTIONS)[number]["value"];
 export type SortOption = (typeof SORT_OPTIONS)[number]["value"];
+export type ConditionOption = (typeof CONDITION_OPTIONS)[number]["value"];
 
 export type Filters = {
   sheet: string;
@@ -36,6 +47,7 @@ export type Filters = {
   includeKeywords: string;
   excludeFleaMarket: boolean;
   excludeUnknownShipping: boolean;
+  conditions: ConditionOption[];
   sort: SortOption;
 };
 
@@ -52,6 +64,7 @@ type SearchLike = {
 export function parseFilters(searchParams: SearchLike): Filters {
   const timeLimit = normalizeTimeOption(searchParams.get("hours"));
   const sort = normalizeSortOption(searchParams.get("sort"));
+  const conditions = normalizeConditionOptions(searchParams.get("condition"));
 
   return {
     sheet: searchParams.get("sheet") ?? "",
@@ -65,6 +78,7 @@ export function parseFilters(searchParams: SearchLike): Filters {
     includeKeywords: searchParams.get("include") ?? "",
     excludeFleaMarket: searchParams.get("excludeFlea") !== "0",
     excludeUnknownShipping: searchParams.get("unknownShipping") === "1",
+    conditions,
     sort,
   };
 }
@@ -100,6 +114,44 @@ export function normalizeText(input: string) {
   return input.normalize("NFKC").toLowerCase();
 }
 
+export function getItemConditionText(item: Item) {
+  return item.conditionText?.trim() || inferConditionText(item.title);
+}
+
+export function getItemConditionValue(item: Item) {
+  return normalizeConditionValue(getItemConditionText(item));
+}
+
+export function inferConditionText(title: string) {
+  const normalized = normalizeText(title);
+
+  if (/未使用に近/.test(normalized)) {
+    return "未使用に近い";
+  }
+
+  if (/未使用|新品|未開封/.test(normalized)) {
+    return "未使用";
+  }
+
+  if (/目立った傷|美品|良品|画面無傷|ヤケなし/.test(normalized)) {
+    return "目立った傷や汚れなし";
+  }
+
+  if (/ジャンク|状態が悪|動作未確認|現状品|画面映らず|通電のみ/.test(normalized)) {
+    return "全体的に状態が悪い";
+  }
+
+  if (/傷や汚れあり/.test(normalized) && !/やや傷/.test(normalized)) {
+    return "傷や汚れあり";
+  }
+
+  if (/やや傷|小傷|キズあり|傷あり|汚れあり/.test(normalized)) {
+    return "やや傷や汚れあり";
+  }
+
+  return "中古";
+}
+
 export function getEstimatedEndDate(item: Item) {
   if (!item.fetchedAt || item.endsInHours === null) {
     return null;
@@ -131,6 +183,7 @@ function getFilterSteps(filters: Filters) {
   const timeLimit = TIME_OPTIONS.find((option) => option.value === filters.timeLimit)?.hours ?? null;
   const excludeKeywords = splitKeywords(filters.excludeKeywords);
   const includeKeywords = splitKeywords(filters.includeKeywords);
+  const selectedConditions = filters.conditions;
 
   return [
     {
@@ -179,6 +232,11 @@ function getFilterSteps(filters: Filters) {
       active: filters.excludeUnknownShipping,
       passes: (item: Item) => item.shippingFee !== null,
     },
+    {
+      label: "商品の状態",
+      active: selectedConditions.length > 0,
+      passes: (item: Item) => conditionMatches(item, selectedConditions),
+    },
   ];
 }
 
@@ -210,6 +268,80 @@ function normalizeSortOption(value: string | null): SortOption {
   }
 
   return "totalAsc";
+}
+
+function normalizeConditionOptions(value: string | null): ConditionOption[] {
+  if (!value) {
+    return [];
+  }
+
+  const allowed = new Set(CONDITION_OPTIONS.map((option) => option.value));
+  const selected = new Set(
+    value
+      .split(",")
+      .map((option) => option.trim())
+      .filter((option): option is ConditionOption => allowed.has(option as ConditionOption)),
+  );
+
+  return CONDITION_OPTIONS.filter((option) => selected.has(option.value)).map(
+    (option) => option.value,
+  );
+}
+
+function normalizeConditionValue(value: string): ConditionOption | null {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (/未使用に近/.test(normalized)) {
+    return "likeNew";
+  }
+
+  if (/未使用|新品|未開封/.test(normalized)) {
+    return "unused";
+  }
+
+  if (/目立った傷|汚れなし|美品|良品|画面無傷|ヤケなし/.test(normalized)) {
+    return "good";
+  }
+
+  if (/全体的に状態が悪|状態が悪|ジャンク|動作未確認|現状品|画面映らず|通電のみ/.test(
+    normalized,
+  )) {
+    return "poor";
+  }
+
+  if (/傷や汚れあり/.test(normalized) && !/やや傷/.test(normalized)) {
+    return "damaged";
+  }
+
+  if (/やや傷|小傷|キズあり|傷あり|汚れあり/.test(normalized)) {
+    return "fair";
+  }
+
+  if (/中古/.test(normalized)) {
+    return "used";
+  }
+
+  return null;
+}
+
+function conditionMatches(item: Item, selectedConditions: ConditionOption[]) {
+  const condition = getItemConditionValue(item);
+
+  if (!condition) {
+    return false;
+  }
+
+  return selectedConditions.some((selectedCondition) => {
+    if (selectedCondition === condition) {
+      return true;
+    }
+
+    return selectedCondition === "used" && condition !== "unused";
+  });
 }
 
 function sortItems(items: Item[], sort: SortOption) {

@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  CONDITION_OPTIONS,
   DEFAULT_EXCLUDE_KEYWORDS,
   SORT_OPTIONS,
   TIME_OPTIONS,
   filterAndSortItems,
   getEstimatedEndDate,
+  getItemConditionText,
   isProbablyEnded,
   parseFilters,
 } from "@/lib/filtering";
+import type { ConditionOption } from "@/lib/filtering";
 import type { ApiError, Item, ItemsResponse, SheetInfo, SheetsResponse } from "@/lib/types";
 
 type LoadingState = "idle" | "loading" | "error";
@@ -156,8 +159,25 @@ export function YahooAuctionViewer() {
       include: null,
       excludeFlea: "0",
       unknownShipping: null,
+      condition: null,
       sort: null,
     });
+  }
+
+  function handleConditionToggle(value: ConditionOption, checked: boolean) {
+    const selected = new Set<ConditionOption>(filters.conditions);
+
+    if (checked) {
+      selected.add(value);
+    } else {
+      selected.delete(value);
+    }
+
+    const orderedValues = CONDITION_OPTIONS.filter((option) => selected.has(option.value)).map(
+      (option) => option.value,
+    );
+
+    updateQuery({ condition: orderedValues.length > 0 ? orderedValues.join(",") : null });
   }
 
   return (
@@ -249,6 +269,11 @@ export function YahooAuctionViewer() {
               ))}
             </select>
           </FilterField>
+
+          <ConditionFilter
+            selectedConditions={filters.conditions}
+            onToggle={handleConditionToggle}
+          />
 
           <FilterField label="入札数の上限">
             <input
@@ -368,10 +393,49 @@ function FilterField({ label, children }: { label: string; children: React.React
   );
 }
 
+function ConditionFilter({
+  selectedConditions,
+  onToggle,
+}: {
+  selectedConditions: ConditionOption[];
+  onToggle: (value: ConditionOption, checked: boolean) => void;
+}) {
+  return (
+    <div className="col-span-2 rounded-[8px] border border-border bg-panel p-2 xl:col-span-2">
+      <div className="flex items-center justify-between text-xs font-semibold text-text">
+        <span>商品の状態</span>
+        <span aria-hidden="true" className="text-muted">
+          ^
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-1">
+        {CONDITION_OPTIONS.map((option) => (
+          <label
+            key={option.value}
+            className={[
+              "flex min-h-6 items-center gap-2 text-xs text-text",
+              option.group === "used" ? "pl-4" : "",
+            ].join(" ")}
+          >
+            <input
+              checked={selectedConditions.includes(option.value)}
+              onChange={(event) => onToggle(option.value, event.target.checked)}
+              type="checkbox"
+              className="h-4 w-4 shrink-0 accent-accent"
+            />
+            <span className="min-w-0 leading-4">{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ItemCard({ item }: { item: Item }) {
   const ended = isProbablyEnded(item);
   const estimatedEndDate = getEstimatedEndDate(item);
   const urgent = item.endsInHours !== null && item.endsInHours <= 6 && !ended;
+  const conditionText = getItemConditionText(item);
 
   return (
     <article
@@ -399,6 +463,7 @@ function ItemCard({ item }: { item: Item }) {
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex flex-wrap gap-1">
           {item.isFleaMarket ? <Badge tone="accent">PayPayフリマ</Badge> : null}
+          {conditionText ? <Badge tone="muted">{conditionText}</Badge> : null}
           {item.shippingFee === null ? <Badge tone="warning">送料未定</Badge> : null}
           {ended ? <Badge tone="muted">終了推定</Badge> : null}
         </div>

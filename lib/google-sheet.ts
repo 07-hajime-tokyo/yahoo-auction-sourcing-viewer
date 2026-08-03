@@ -1,3 +1,4 @@
+import { inferConditionText } from "@/lib/filtering";
 import type { Item, ItemsResponse, SheetsResponse } from "@/lib/types";
 
 const TIMEOUT_MS = 10_000;
@@ -190,6 +191,9 @@ function recordToItem(record: CsvRow): Item | null {
   const shippingText = pick(record, ["shipping", "shippingText", "送料"]) || "送料未定";
   const shippingFee = parseShippingFee(shippingText);
   const endTimeText = pick(record, ["endTime", "endTimeText", "残り時間"]);
+  const conditionText =
+    pick(record, ["condition", "conditionText", "商品の状態", "状態", "コンディション"]) ||
+    inferConditionText(title);
   const fetchedAt = parseDateLike(pick(record, ["取得日時", "fetchedAt"])) ?? new Date().toISOString();
 
   return {
@@ -204,6 +208,7 @@ function recordToItem(record: CsvRow): Item | null {
     endTimeText,
     endsInHours: parseEndsInHours(endTimeText),
     isFleaMarket: /paypayfleamarket\.yahoo\.co\.jp/i.test(url),
+    conditionText,
     fetchedAt,
     sourceUrl: pick(record, ["取得元ページ", "sourceUrl", "source"]) || "",
     rowIndex: parseNumber(record.__rowIndex) ?? 0,

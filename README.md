@@ -63,6 +63,7 @@ GOOGLE_SHEET_CSV_URL=
 - `minTotal`: 価格下限
 - `hours`: `6` / `24` / `48` / `72`
 - `maxBids`: 入札数の上限
+- `condition`: 商品の状態。`unused` / `used` / `likeNew` / `good` / `fair` / `damaged` / `poor` をカンマ区切りで指定
 - `exclude`: 除外キーワード
 - `include`: 含むキーワード
 - `excludeFlea`: `0` のときフリマを含めます。既定では除外します。
