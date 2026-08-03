@@ -1,6 +1,6 @@
 # ヤフオク仕入れ候補ビューア
 
-Google Apps Script WebApp の JSON API を Next.js Route Handler 経由で読み込み、URL クエリの条件で絞り込む社内向けフロントエンドです。
+Google Apps Script WebApp または Google Sheets CSV を Next.js Route Handler 経由で読み込み、仕入れ候補をURLクエリの条件で絞り込む内部ツールです。
 
 ## セットアップ
 
@@ -10,50 +10,68 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-`GAS_API_URL` が未設定のままなら `mock/items.json` が返るため、Vercel Preview でもそのまま画面を確認できます。
+## データソース
+
+優先順位は次の通りです。
+
+1. `GAS_API_URL` がある場合: GAS WebApp JSON APIを使用
+2. `GAS_API_URL` が無い場合: Google Sheets CSVを使用
+3. どちらも無い場合: `mock/items.json` を使用
+
+このリポジトリでは、既定のGoogle Sheetとして次を組み込んでいます。
+
+- Spreadsheet ID: `1nXVUKaGbNDDrZp-n4Vl-fK4qU_7TC5yKFYY3ghArItw`
+- Sheet tab: `リペア`
 
 ## 環境変数
 
-`.env.local` または Vercel の Project Settings に次を設定します。
+`.env.local` または Vercel Project Settings に設定します。
 
 ```bash
 GAS_API_URL=https://script.google.com/macros/s/xxxxx/exec
 GAS_READ_TOKEN=
+
+GOOGLE_SHEET_ID=1nXVUKaGbNDDrZp-n4Vl-fK4qU_7TC5yKFYY3ghArItw
+GOOGLE_SHEET_NAME=リペア
+GOOGLE_SHEET_CSV_URL=
 ```
 
-- `GAS_API_URL`: 公開済み GAS WebApp の `/exec` URL
-- `GAS_READ_TOKEN`: 読み取りトークン。空の場合は GAS へのクエリに付与しません
+- `GAS_API_URL`: 公開済みGAS WebAppの `/exec` URL。設定時は最優先で使います。
+- `GAS_READ_TOKEN`: 読み取りトークン。空ならGASへのクエリに付けません。
+- `GOOGLE_SHEET_ID`: Google Sheets CSVを使う場合のSpreadsheet ID。
+- `GOOGLE_SHEET_NAME`: 読み込むタブ名。
+- `GOOGLE_SHEET_CSV_URL`: 公開CSV URLを直接指定したい場合に使います。
 
-ブラウザから GAS へ直接アクセスせず、画面は必ず `/api/sheets` と `/api/items` を呼びます。
+ブラウザからGASやGoogle Sheetsへ直接アクセスせず、画面は必ず `/api/sheets` と `/api/items` を呼びます。
 
 ## API 中継
 
-- `GET /api/sheets`: GAS の `action=sheets` を中継します
-- `GET /api/items?sheet=3DS-LL`: GAS の `action=list&sheet=...` を中継します
-- `export const revalidate = 300` で5分キャッシュします
-- GAS が HTTP 200 で `{ "ok": false, "error": "..." }` を返した場合は、Route Handler が `502` と `{ "error": "..." }` に変換します
-- GAS 呼び出しは10秒でタイムアウトします
+- `GET /api/sheets`: シート一覧を返します。
+- `GET /api/items?sheet=リペア`: 商品一覧を返します。
+- `export const revalidate = 300` で5分キャッシュします。
+- GASがHTTP 200で `{ "ok": false, "error": "..." }` を返した場合、Route Handlerは `502` と `{ "error": "..." }` に変換します。
+- GAS/Google Sheets CSVの呼び出しは10秒でタイムアウトします。
 
 ## URL クエリ
 
-フィルタ状態は URL に保存されます。
+フィルタ状態はURLに保存されます。
 
 - `sheet`: シート名
 - `maxTotal`: 仕入れ上限
 - `minTotal`: 価格下限
 - `hours`: `6` / `24` / `72`
 - `maxBids`: 入札数の上限
-- `exclude`: 除外キーワード。未指定時は `ジャンク, 部品取り, 訳あり, 難あり, 不動`
+- `exclude`: 除外キーワード
 - `include`: 含むキーワード
-- `excludeFlea`: `0` のときフリマを含めます。未指定時は除外します
-- `unknownShipping`: `1` のとき送料未定を除外します
+- `excludeFlea`: `0` のときフリマを含めます。既定では除外します。
+- `unknownShipping`: `1` のとき送料未定を除外します。
 - `sort`: `totalAsc` / `endsSoon` / `bidsAsc` / `newFetched`
 
 ## Vercel デプロイ
 
-1. GitHub などにこのプロジェクトを push します。
-2. Vercel で新規 Project として import します。
-3. Environment Variables に `GAS_API_URL` と必要なら `GAS_READ_TOKEN` を設定します。
-4. Build Command は `npm run build`、Development Command は `npm run dev` のままでデプロイします。
+1. GitHubにpushします。
+2. VercelでこのリポジトリをImportします。
+3. 必要に応じてEnvironment Variablesを設定します。
+4. Build Commandは `npm run build` のままでデプロイします。
 
-環境変数を設定しない Preview はモック表示、Production は実データ表示のように分けられます。
+Google Sheet CSVを使う場合、そのシートはVercelのサーバーからCSVとして読める必要があります。非公開シートを使う場合は、従来通りGAS WebAppを公開して `GAS_API_URL` を設定してください。
