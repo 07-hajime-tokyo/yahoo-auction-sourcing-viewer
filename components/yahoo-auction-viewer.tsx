@@ -29,7 +29,8 @@ export function YahooAuctionViewer() {
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const selectedSheet = filters.sheet || sheets[0]?.name || "";
+  const availableSheets = Array.isArray(sheets) ? sheets : [];
+  const selectedSheet = filters.sheet || availableSheets[0]?.name || "";
 
   const updateQuery = useCallback(
     (updates: Record<string, string | null>) => {
@@ -65,7 +66,7 @@ export function YahooAuctionViewer() {
         }
 
         if (!cancelled) {
-          setSheets(data.sheets);
+          setSheets(Array.isArray(data.sheets) ? data.sheets : []);
           setSheetState("idle");
         }
       } catch (loadError) {
@@ -84,12 +85,12 @@ export function YahooAuctionViewer() {
   }, [refreshKey]);
 
   useEffect(() => {
-    if (filters.sheet || sheets.length === 0) {
+    if (filters.sheet || availableSheets.length === 0) {
       return;
     }
 
-    updateQuery({ sheet: sheets[0].name });
-  }, [filters.sheet, sheets, updateQuery]);
+    updateQuery({ sheet: availableSheets[0].name });
+  }, [availableSheets, filters.sheet, updateQuery]);
 
   useEffect(() => {
     if (!selectedSheet) {
@@ -165,12 +166,12 @@ export function YahooAuctionViewer() {
         <div className="min-w-0">
           <div className="mb-2 text-xs text-muted">ヤフオク仕入れ候補</div>
           <div className="thin-scrollbar flex gap-2 overflow-x-auto pb-1">
-            {sheetState === "loading" && sheets.length === 0 ? (
+            {sheetState === "loading" && availableSheets.length === 0 ? (
               <div className="rounded-[8px] border border-border px-3 py-2 text-sm text-muted">
                 シート取得中
               </div>
             ) : null}
-            {sheets.map((sheet) => (
+            {availableSheets.map((sheet) => (
               <button
                 key={sheet.name}
                 type="button"
