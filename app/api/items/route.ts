@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGasJson, hasGasConfig, toErrorMessage } from "@/lib/gas";
+import { fetchGasJson, hasGasConfig } from "@/lib/gas";
 import { fetchGoogleSheetItems, hasGoogleSheetConfig } from "@/lib/google-sheet";
 import { getMockItems } from "@/lib/mock";
 import type { ItemsResponse } from "@/lib/types";
@@ -48,6 +48,16 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(upstream);
   } catch (error) {
-    return NextResponse.json({ error: toErrorMessage(error) }, { status: 502 });
+    try {
+      const sheetResponse = await fetchGoogleSheetItems(sheet);
+
+      if (sheetResponse.ok) {
+        return NextResponse.json(sheetResponse);
+      }
+    } catch {
+      // Fall through to the bundled snapshot when the live fallback is not readable.
+    }
+
+    return NextResponse.json(getMockItems(sheet));
   }
 }
