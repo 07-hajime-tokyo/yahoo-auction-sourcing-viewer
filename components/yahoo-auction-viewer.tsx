@@ -3,26 +3,46 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  CONDITION_OPTIONS,
-  DEFAULT_EXCLUDE_KEYWORDS,
+  EXCLUDE_KEYWORDS_STORAGE_KEY,
   SORT_OPTIONS,
   TIME_OPTIONS,
   filterAndSortItems,
   getEstimatedEndDate,
-  getItemConditionText,
   isProbablyEnded,
+  normalizeKeywordList,
+  parseKeywordInput,
   parseFilters,
+  serializeKeywords,
 } from "@/lib/filtering";
-import type { ConditionOption } from "@/lib/filtering";
+import type { ExcludeKeywordStat } from "@/lib/filtering";
 import type { ApiError, Item, ItemsResponse, SheetInfo, SheetsResponse } from "@/lib/types";
 
 type LoadingState = "idle" | "loading" | "error";
+
+const CONDITION_CHECKS_STORAGE_PREFIX = "isa.conditionChecks.";
+const CONDITION_OPTIONS = [
+  { value: "unused", label: "未使用", group: "root" },
+  { value: "used", label: "中古", group: "root" },
+  { value: "likeNew", label: "未使用に近い", group: "used" },
+  { value: "good", label: "目立った傷や汚れなし", group: "used" },
+  { value: "fair", label: "やや傷や汚れあり", group: "used" },
+  { value: "damaged", label: "傷や汚れあり", group: "used" },
+  { value: "poor", label: "全体的に状態が悪い", group: "used" },
+] as const;
+type ConditionOption = (typeof CONDITION_OPTIONS)[number]["value"];
 
 export function YahooAuctionViewer() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const filters = useMemo(() => parseFilters(searchParams), [searchParams]);
+  const [storedExcludeKeywords, setStoredExcludeKeywords] = useState<string[] | undefined>();
+  const [conditionChecksBySheet, setConditionChecksBySheet] = useState<
+    Record<string, ConditionOption[]>
+  >({});
+  const filters = useMemo(
+    () => parseFilters(searchParams, storedExcludeKeywords),
+    [searchParams, storedExcludeKeywords],
+  );
   const [sheets, setSheets] = useState<SheetInfo[]>([]);
   const [sheetState, setSheetState] = useState<LoadingState>("idle");
   const [itemsState, setItemsState] = useState<LoadingState>("idle");
@@ -38,6 +58,7 @@ export function YahooAuctionViewer() {
   const updateQuery = useCallback(
     (updates: Record<string, string | null>) => {
       const params = new URLSearchParams(searchParams.toString());
+      params.delete("condition");
 
       for (const [key, value] of Object.entries(updates)) {
         if (value === null) {
@@ -52,6 +73,35 @@ export function YahooAuctionViewer() {
     },
     [pathname, router, searchParams],
   );
+
+  useEffect(() => {
+    setStoredExcludeKeywords(readStoredExcludeKeywords());
+  }, []);
+
+  useEffect(() => {
+    if (!selectedSheet) {
+      return;
+    }
+
+    setConditionChecksBySheet((current) => {
+      if (selectedSheet in current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [selectedSheet]: readStoredConditionChecks(selectedSheet),
+      };
+    });
+  }, [selectedSheet]);
+
+  useEffect(() => {
+    if (!searchParams.has("condition")) {
+      return;
+    }
+
+    updateQuery({ condition: null });
+  }, [searchParams, updateQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,14 +190,23 @@ export function YahooAuctionViewer() {
   const rawItems = itemsResponse?.items ?? [];
   const visibleItems = useMemo(() => rawItems.filter((item) => !isProbablyEnded(item)), [rawItems]);
   const filtered = useMemo(() => filterAndSortItems(visibleItems, filters), [visibleItems, filters]);
+  const excludeKeywords = useMemo(
+    () => parseKeywordInput(filters.excludeKeywords),
+    [filters.excludeKeywords],
+  );
+  const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
   const totalCount = visibleItems.length;
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
   }
 
-  function handleExcludeKeywordChange(value: string) {
-    updateQuery({ exclude: value });
+  function updateExcludeKeywords(keywords: string[]) {
+    const nextKeywords = normalizeKeywordList(keywords);
+
+    writeStoredExcludeKeywords(nextKeywords);
+    setStoredExcludeKeywords(nextKeywords);
+    updateQuery({ exclude: serializeKeywords(nextKeywords) });
   }
 
   function clearFilters() {
@@ -165,7 +224,11 @@ export function YahooAuctionViewer() {
   }
 
   function handleConditionToggle(value: ConditionOption, checked: boolean) {
-    const selected = new Set<ConditionOption>(filters.conditions);
+    if (!selectedSheet) {
+      return;
+    }
+
+    const selected = new Set<ConditionOption>(selectedConditions);
 
     if (checked) {
       selected.add(value);
@@ -173,11 +236,15 @@ export function YahooAuctionViewer() {
       selected.delete(value);
     }
 
-    const orderedValues = CONDITION_OPTIONS.filter((option) => selected.has(option.value)).map(
+    const nextConditions = CONDITION_OPTIONS.filter((option) => selected.has(option.value)).map(
       (option) => option.value,
     );
 
-    updateQuery({ condition: orderedValues.length > 0 ? orderedValues.join(",") : null });
+    writeStoredConditionChecks(selectedSheet, nextConditions);
+    setConditionChecksBySheet((current) => ({
+      ...current,
+      [selectedSheet]: nextConditions,
+    }));
   }
 
   return (
@@ -231,7 +298,7 @@ export function YahooAuctionViewer() {
       </header>
 
       <section className="sticky top-0 z-10 border-b border-border bg-base/95 pb-3 pt-2 backdrop-blur">
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
           <FilterField label="仕入れ上限">
             <input
               value={filters.maxTotal}
@@ -278,16 +345,6 @@ export function YahooAuctionViewer() {
               inputMode="numeric"
               min="0"
               placeholder="なし"
-              className={inputClassName}
-            />
-          </FilterField>
-
-          <FilterField label="除外キーワード">
-            <input
-              value={filters.excludeKeywords}
-              onChange={(event) => handleExcludeKeywordChange(event.target.value)}
-              type="text"
-              placeholder={DEFAULT_EXCLUDE_KEYWORDS.join(", ")}
               className={inputClassName}
             />
           </FilterField>
@@ -342,8 +399,15 @@ export function YahooAuctionViewer() {
           </div>
         </div>
 
+        <ExcludeKeywordEditor
+          keywords={excludeKeywords}
+          baseCount={filtered.excludeKeywordBaseCount}
+          stats={filtered.excludeKeywordStats}
+          onChange={updateExcludeKeywords}
+        />
+
         <ConditionChecklist
-          selectedConditions={filters.conditions}
+          selectedConditions={selectedConditions}
           onToggle={handleConditionToggle}
         />
 
@@ -390,6 +454,96 @@ function FilterField({ label, children }: { label: string; children: React.React
       <span className="text-xs text-muted">{label}</span>
       {children}
     </label>
+  );
+}
+
+function ExcludeKeywordEditor({
+  keywords,
+  baseCount,
+  stats,
+  onChange,
+}: {
+  keywords: string[];
+  baseCount: number;
+  stats: ExcludeKeywordStat[];
+  onChange: (keywords: string[]) => void;
+}) {
+  const [inputValue, setInputValue] = useState("");
+  const statsByKeyword = new Map(stats.map((stat) => [stat.keyword, stat]));
+
+  function commitInput() {
+    const additions = parseKeywordInput(inputValue);
+
+    if (additions.length === 0) {
+      setInputValue("");
+      return;
+    }
+
+    onChange([...keywords, ...additions]);
+    setInputValue("");
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    event.preventDefault();
+    commitInput();
+  }
+
+  return (
+    <div className="mt-2 rounded-[8px] border border-border bg-panel p-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-text">除外キーワード</div>
+        <div className="text-[11px] text-muted">母集団 {baseCount.toLocaleString("ja-JP")}件</div>
+      </div>
+      <div className="flex min-h-9 flex-wrap items-center gap-1.5">
+        {keywords.map((keyword) => {
+          const stat = statsByKeyword.get(keyword) ?? {
+            keyword,
+            removed: 0,
+            baseCount,
+          };
+          const tooBroad = stat.baseCount > 0 && stat.removed / stat.baseCount > 0.4;
+          const chipClassName =
+            stat.removed === 0
+              ? "border-border bg-base text-muted opacity-55"
+              : tooBroad
+                ? "border-warning/60 bg-warning/10 text-warning"
+                : "border-accent/35 bg-accent/10 text-text";
+
+          return (
+            <span
+              key={keyword}
+              className={`inline-flex h-7 max-w-full items-center gap-1.5 rounded-[8px] border px-2 text-xs ${chipClassName}`}
+            >
+              <span className="truncate">{keyword}</span>
+              <span className="rounded-[6px] border border-current/25 px-1 text-[10px] leading-4">
+                {stat.removed.toLocaleString("ja-JP")}
+              </span>
+              <button
+                type="button"
+                onClick={() => onChange(keywords.filter((current) => current !== keyword))}
+                aria-label={`${keyword}を除外キーワードから削除`}
+                className="text-sm leading-none opacity-75 hover:opacity-100"
+              >
+                ×
+              </button>
+            </span>
+          );
+        })}
+        <input
+          value={inputValue}
+          onChange={(event) => setInputValue(event.target.value)}
+          onKeyDown={handleKeyDown}
+          type="text"
+          aria-label="除外キーワードを追加"
+          placeholder="キーワードを追加"
+          className="h-7 min-w-[12rem] flex-1 rounded-[8px] border border-border bg-base px-2 text-xs text-text outline-none placeholder:text-muted focus:border-accent"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -455,7 +609,6 @@ function ItemCard({ item }: { item: Item }) {
   const ended = isProbablyEnded(item);
   const estimatedEndDate = getEstimatedEndDate(item);
   const urgent = item.endsInHours !== null && item.endsInHours <= 6 && !ended;
-  const conditionText = getItemConditionText(item);
 
   return (
     <article
@@ -483,7 +636,6 @@ function ItemCard({ item }: { item: Item }) {
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex flex-wrap gap-1">
           {item.isFleaMarket ? <Badge tone="accent">PayPayフリマ</Badge> : null}
-          {conditionText ? <Badge tone="muted">{conditionText}</Badge> : null}
           {item.shippingFee === null ? <Badge tone="warning">送料未定</Badge> : null}
           {ended ? <Badge tone="muted">終了推定</Badge> : null}
         </div>
@@ -615,6 +767,71 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function readStoredExcludeKeywords() {
+  const values = readStoredStringArray(EXCLUDE_KEYWORDS_STORAGE_KEY);
+  return values ? normalizeKeywordList(values) : undefined;
+}
+
+function writeStoredExcludeKeywords(keywords: string[]) {
+  writeStoredStringArray(EXCLUDE_KEYWORDS_STORAGE_KEY, normalizeKeywordList(keywords));
+}
+
+function readStoredConditionChecks(sheetName: string): ConditionOption[] {
+  const values = readStoredStringArray(getConditionChecksStorageKey(sheetName)) ?? [];
+  const allowedValues = new Set(CONDITION_OPTIONS.map((option) => option.value));
+  const selectedValues = new Set(
+    values.filter((value): value is ConditionOption => allowedValues.has(value as ConditionOption)),
+  );
+
+  return CONDITION_OPTIONS.filter((option) => selectedValues.has(option.value)).map(
+    (option) => option.value,
+  );
+}
+
+function writeStoredConditionChecks(sheetName: string, conditions: ConditionOption[]) {
+  writeStoredStringArray(getConditionChecksStorageKey(sheetName), conditions);
+}
+
+function getConditionChecksStorageKey(sheetName: string) {
+  return `${CONDITION_CHECKS_STORAGE_PREFIX}${encodeURIComponent(sheetName)}`;
+}
+
+function readStoredStringArray(key: string) {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(key);
+
+    if (rawValue === null) {
+      return undefined;
+    }
+
+    const parsedValue: unknown = JSON.parse(rawValue);
+
+    if (!Array.isArray(parsedValue)) {
+      return undefined;
+    }
+
+    return parsedValue.filter((value): value is string => typeof value === "string");
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredStringArray(key: string, value: string[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable in hardened browser contexts.
+  }
 }
 
 function toErrorText(error: unknown) {

@@ -1,5 +1,7 @@
 import type { Item } from "@/lib/types";
 
+export const EXCLUDE_KEYWORDS_STORAGE_KEY = "isa.excludeKeywords";
+
 export const DEFAULT_EXCLUDE_KEYWORDS = [
   "ジャンク",
   "部品取り",
@@ -16,16 +18,6 @@ export const TIME_OPTIONS = [
   { value: "72", label: "3日以内", hours: 72 },
 ] as const;
 
-export const CONDITION_OPTIONS = [
-  { value: "unused", label: "未使用", group: "root" },
-  { value: "used", label: "中古", group: "root" },
-  { value: "likeNew", label: "未使用に近い", group: "used" },
-  { value: "good", label: "目立った傷や汚れなし", group: "used" },
-  { value: "fair", label: "やや傷や汚れあり", group: "used" },
-  { value: "damaged", label: "傷や汚れあり", group: "used" },
-  { value: "poor", label: "全体的に状態が悪い", group: "used" },
-] as const;
-
 export const SORT_OPTIONS = [
   { value: "totalAsc", label: "総額が安い順" },
   { value: "endsSoon", label: "残り時間が短い順" },
@@ -35,7 +27,6 @@ export const SORT_OPTIONS = [
 
 export type TimeOption = (typeof TIME_OPTIONS)[number]["value"];
 export type SortOption = (typeof SORT_OPTIONS)[number]["value"];
-export type ConditionOption = (typeof CONDITION_OPTIONS)[number]["value"];
 
 export type Filters = {
   sheet: string;
@@ -47,7 +38,6 @@ export type Filters = {
   includeKeywords: string;
   excludeFleaMarket: boolean;
   excludeUnknownShipping: boolean;
-  conditions: ConditionOption[];
   sort: SortOption;
 };
 
@@ -56,15 +46,30 @@ export type FilterBreakdown = {
   removed: number;
 };
 
+export type ExcludeKeywordStat = {
+  keyword: string;
+  removed: number;
+  baseCount: number;
+};
+
 type SearchLike = {
   get(name: string): string | null;
   has(name: string): boolean;
 };
 
-export function parseFilters(searchParams: SearchLike): Filters {
+type FilterStep = {
+  label: string;
+  active: boolean;
+  kind?: "excludeKeywords";
+  passes: (item: Item) => boolean;
+};
+
+export function parseFilters(
+  searchParams: SearchLike,
+  storedExcludeKeywords?: string[],
+): Filters {
   const timeLimit = normalizeTimeOption(searchParams.get("hours"));
   const sort = normalizeSortOption(searchParams.get("sort"));
-  const conditions = normalizeConditionOptions(searchParams.get("condition"));
 
   return {
     sheet: searchParams.get("sheet") ?? "",
@@ -74,11 +79,10 @@ export function parseFilters(searchParams: SearchLike): Filters {
     maxBids: searchParams.get("maxBids") ?? "",
     excludeKeywords: searchParams.has("exclude")
       ? (searchParams.get("exclude") ?? "")
-      : DEFAULT_EXCLUDE_KEYWORDS.join(", "),
+      : serializeKeywords(storedExcludeKeywords ?? DEFAULT_EXCLUDE_KEYWORDS),
     includeKeywords: searchParams.get("include") ?? "",
     excludeFleaMarket: searchParams.get("excludeFlea") !== "0",
     excludeUnknownShipping: searchParams.get("unknownShipping") === "1",
-    conditions,
     sort,
   };
 }
@@ -86,6 +90,7 @@ export function parseFilters(searchParams: SearchLike): Filters {
 export function filterAndSortItems(items: Item[], filters: Filters) {
   let remaining = [...items];
   const breakdown: FilterBreakdown[] = [];
+  const excludeKeywordBaseItems = getExcludeKeywordBaseItems(items, filters);
 
   for (const step of getFilterSteps(filters)) {
     if (!step.active) {
@@ -100,22 +105,44 @@ export function filterAndSortItems(items: Item[], filters: Filters) {
   return {
     items: sortItems(remaining, filters.sort),
     breakdown,
+    excludeKeywordBaseCount: excludeKeywordBaseItems.length,
+    excludeKeywordStats: getExcludeKeywordStats(filters, excludeKeywordBaseItems),
   };
 }
 
 export function splitKeywords(input: string) {
-  return input
-    .split(/[,\u3001]/)
-    .map((keyword) => normalizeText(keyword.trim()))
-    .filter(Boolean);
+  return parseKeywordInput(input).map((keyword) => normalizeText(keyword));
+}
+
+export function parseKeywordInput(input: string) {
+  return normalizeKeywordList(input.split(/[,\u3001]/));
+}
+
+export function normalizeKeywordList(keywords: string[]) {
+  const seen = new Set<string>();
+  const normalizedKeywords: string[] = [];
+
+  for (const keyword of keywords) {
+    const trimmedKeyword = keyword.trim();
+    const normalizedKeyword = normalizeText(trimmedKeyword);
+
+    if (!normalizedKeyword || seen.has(normalizedKeyword)) {
+      continue;
+    }
+
+    seen.add(normalizedKeyword);
+    normalizedKeywords.push(trimmedKeyword);
+  }
+
+  return normalizedKeywords;
+}
+
+export function serializeKeywords(keywords: string[]) {
+  return normalizeKeywordList(keywords).join(", ");
 }
 
 export function normalizeText(input: string) {
   return input.normalize("NFKC").toLowerCase();
-}
-
-export function getItemConditionText(item: Item) {
-  return item.conditionText?.trim() || "";
 }
 
 export function getEstimatedEndDate(item: Item) {
@@ -146,7 +173,54 @@ export function isProbablyEnded(item: Item, now = new Date()) {
   return estimatedEndDate.getTime() < now.getTime();
 }
 
-function getFilterSteps(filters: Filters) {
+function getExcludeKeywordBaseItems(items: Item[], filters: Filters) {
+  return applyFilterSteps(
+    items,
+    getFilterSteps(filters).filter((step) => step.kind !== "excludeKeywords"),
+  );
+}
+
+function getExcludeKeywordStats(
+  filters: Filters,
+  excludeKeywordBaseItems: Item[],
+): ExcludeKeywordStat[] {
+  const keywords = parseKeywordInput(filters.excludeKeywords);
+
+  if (keywords.length === 0) {
+    return [];
+  }
+
+  const baseCount = excludeKeywordBaseItems.length;
+
+  return keywords.map((keyword) => {
+    const normalizedKeyword = normalizeText(keyword);
+    const removed = excludeKeywordBaseItems.filter((item) =>
+      normalizeText(item.title).includes(normalizedKeyword),
+    ).length;
+
+    return {
+      keyword,
+      removed,
+      baseCount,
+    };
+  });
+}
+
+function applyFilterSteps(items: Item[], steps: FilterStep[]) {
+  let remaining = [...items];
+
+  for (const step of steps) {
+    if (!step.active) {
+      continue;
+    }
+
+    remaining = remaining.filter(step.passes);
+  }
+
+  return remaining;
+}
+
+function getFilterSteps(filters: Filters): FilterStep[] {
   const maxTotal = parseNumericFilter(filters.maxTotal);
   const minTotal = parseNumericFilter(filters.minTotal);
   const maxBids = parseNumericFilter(filters.maxBids);
@@ -178,6 +252,7 @@ function getFilterSteps(filters: Filters) {
     {
       label: "除外キーワード",
       active: excludeKeywords.length > 0,
+      kind: "excludeKeywords",
       passes: (item: Item) => {
         const title = normalizeText(item.title);
         return !excludeKeywords.some((keyword) => title.includes(keyword));
@@ -232,24 +307,6 @@ function normalizeSortOption(value: string | null): SortOption {
   }
 
   return "totalAsc";
-}
-
-function normalizeConditionOptions(value: string | null): ConditionOption[] {
-  if (!value) {
-    return [];
-  }
-
-  const allowed = new Set(CONDITION_OPTIONS.map((option) => option.value));
-  const selected = new Set(
-    value
-      .split(",")
-      .map((option) => option.trim())
-      .filter((option): option is ConditionOption => allowed.has(option as ConditionOption)),
-  );
-
-  return CONDITION_OPTIONS.filter((option) => selected.has(option.value)).map(
-    (option) => option.value,
-  );
 }
 
 function sortItems(items: Item[], sort: SortOption) {

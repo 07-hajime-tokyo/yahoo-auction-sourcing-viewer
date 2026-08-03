@@ -25,7 +25,6 @@ export type Item = {
   endTimeText: string;
   endsInHours: number | null;
   isFleaMarket: boolean;
-  conditionText?: string;
   fetchedAt: string;
   sourceUrl: string;
   rowIndex: number;

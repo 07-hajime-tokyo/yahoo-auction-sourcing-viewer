@@ -11,35 +11,35 @@ export function hasGoogleSheetConfig() {
 }
 
 export async function fetchGoogleSheetSheets(): Promise<SheetsResponse> {
-  const items = await fetchGoogleSheetItems(getGoogleSheetName());
+  const sheetNames = await fetchGoogleSheetNames();
+  const sheets = await Promise.all(
+    sheetNames.map(async (sheetName) => {
+      try {
+        const response = await fetchGoogleSheetItems(sheetName);
 
-  if (!items.ok) {
-    return items;
-  }
+        return {
+          name: sheetName,
+          rows: response.ok ? response.items.length : 0,
+        };
+      } catch {
+        return {
+          name: sheetName,
+          rows: 0,
+        };
+      }
+    }),
+  );
 
   return {
     ok: true,
-    sheets: [
-      {
-        name: items.sheet,
-        rows: items.items.length,
-      },
-    ],
+    sheets,
   };
 }
 
 export async function fetchGoogleSheetItems(sheet?: string): Promise<ItemsResponse> {
-  const sheetName = getGoogleSheetName();
-  const requestedSheet = sheet?.trim() || sheetName;
+  const requestedSheet = sheet?.trim() || getGoogleSheetName();
 
-  if (requestedSheet !== sheetName) {
-    return {
-      ok: false,
-      error: `Google Sheet source only exposes "${sheetName}".`,
-    };
-  }
-
-  const csv = await fetchSheetCsv(sheetName);
+  const csv = await fetchSheetCsv(requestedSheet);
   const records = csvToRecords(csv);
   const items = records.map(recordToItem).filter((item): item is Item => item !== null);
   const generatedAt =
@@ -50,7 +50,7 @@ export async function fetchGoogleSheetItems(sheet?: string): Promise<ItemsRespon
 
   return {
     ok: true,
-    sheet: sheetName,
+    sheet: requestedSheet,
     count: items.length,
     generatedAt: new Date(generatedAt).toISOString(),
     items,
@@ -63,6 +63,54 @@ function getGoogleSheetId() {
 
 function getGoogleSheetName() {
   return process.env.GOOGLE_SHEET_NAME?.trim() || DEFAULT_GOOGLE_SHEET_NAME;
+}
+
+async function fetchGoogleSheetNames() {
+  const configuredNames = normalizeSheetNames(process.env.GOOGLE_SHEET_NAMES?.split(",") ?? []);
+
+  if (configuredNames.length > 0) {
+    return configuredNames;
+  }
+
+  if (process.env.GOOGLE_SHEET_CSV_URL?.trim()) {
+    return [getGoogleSheetName()];
+  }
+
+  for (const loader of [fetchWorksheetFeedSheetNames, fetchEditPageSheetNames]) {
+    try {
+      const sheetNames = await loader();
+
+      if (sheetNames.length > 0) {
+        return sheetNames;
+      }
+    } catch {
+      // Try the next public metadata shape before falling back to the configured tab.
+    }
+  }
+
+  return [getGoogleSheetName()];
+}
+
+async function fetchWorksheetFeedSheetNames() {
+  const url = `https://spreadsheets.google.com/feeds/worksheets/${getGoogleSheetId()}/public/basic?alt=json`;
+  const text = await fetchText(url, "Google Sheets worksheet feed");
+  const payload = JSON.parse(text) as {
+    feed?: {
+      entry?: Array<{
+        title?: {
+          $t?: string;
+        };
+      }>;
+    };
+  };
+
+  return normalizeSheetNames(payload.feed?.entry?.map((entry) => entry.title?.$t ?? "") ?? []);
+}
+
+async function fetchEditPageSheetNames() {
+  const url = `https://docs.google.com/spreadsheets/d/${getGoogleSheetId()}/edit?usp=sharing`;
+  const html = await fetchText(url, "Google Sheets edit page");
+  return parseSheetNamesFromHtml(html);
 }
 
 function buildCsvUrl(sheetName: string) {
@@ -85,36 +133,97 @@ function buildCsvUrl(sheetName: string) {
 }
 
 async function fetchSheetCsv(sheetName: string) {
+  const text = await fetchText(buildCsvUrl(sheetName), "Google Sheets CSV");
+
+  if (/<!doctype html|<html/i.test(text.slice(0, 500))) {
+    throw new Error(
+      "Google Sheets CSV returned HTML. Make the sheet accessible by link or publish it as CSV.",
+    );
+  }
+
+  return text;
+}
+
+async function fetchText(url: string, label: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(buildCsvUrl(sheetName), {
+    const response = await fetch(url, {
       signal: controller.signal,
       next: { revalidate: 300 },
     });
 
     if (!response.ok) {
-      throw new Error(`Google Sheets CSV returned HTTP ${response.status}.`);
+      throw new Error(`${label} returned HTTP ${response.status}.`);
     }
 
-    const text = await response.text();
-
-    if (/<!doctype html|<html/i.test(text.slice(0, 500))) {
-      throw new Error(
-        "Google Sheets CSV returned HTML. Make the sheet accessible by link or publish it as CSV.",
-      );
-    }
-
-    return text;
+    return response.text();
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("Google Sheets CSV timed out after 10 seconds.");
+      throw new Error(`${label} timed out after 10 seconds.`);
     }
 
     throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function parseSheetNamesFromHtml(html: string) {
+  const sheetNames: string[] = [];
+  const tabNamePattern = /class="[^"]*docs-sheet-tab-name[^"]*"[^>]*>([^<]+)</g;
+  const sheetPropertiesPatterns = [
+    /"sheetId"\s*:\s*\d+[^{}]{0,500}"title"\s*:\s*"((?:\\.|[^"\\])+)"/g,
+    /"title"\s*:\s*"((?:\\.|[^"\\])+)\"[^{}]{0,500}"sheetId"\s*:\s*\d+/g,
+  ];
+
+  for (const match of html.matchAll(tabNamePattern)) {
+    sheetNames.push(decodeHtmlText(match[1] ?? ""));
+  }
+
+  for (const pattern of sheetPropertiesPatterns) {
+    for (const match of html.matchAll(pattern)) {
+      sheetNames.push(decodeJsonString(match[1] ?? ""));
+    }
+  }
+
+  return normalizeSheetNames(sheetNames);
+}
+
+function normalizeSheetNames(names: string[]) {
+  const seen = new Set<string>();
+  const normalizedNames: string[] = [];
+
+  for (const name of names) {
+    const trimmedName = name.trim();
+
+    if (!trimmedName || seen.has(trimmedName)) {
+      continue;
+    }
+
+    seen.add(trimmedName);
+    normalizedNames.push(trimmedName);
+  }
+
+  return normalizedNames;
+}
+
+function decodeHtmlText(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function decodeJsonString(value: string) {
+  try {
+    return JSON.parse(`"${value}"`) as string;
+  } catch {
+    return value;
   }
 }
 
@@ -190,13 +299,6 @@ function recordToItem(record: CsvRow): Item | null {
   const shippingText = pick(record, ["shipping", "shippingText", "送料"]) || "送料未定";
   const shippingFee = parseShippingFee(shippingText);
   const endTimeText = pick(record, ["endTime", "endTimeText", "残り時間"]);
-  const conditionText = pick(record, [
-    "condition",
-    "conditionText",
-    "商品の状態",
-    "状態",
-    "コンディション",
-  ]);
   const fetchedAt = parseDateLike(pick(record, ["取得日時", "fetchedAt"])) ?? new Date().toISOString();
 
   return {
@@ -211,7 +313,6 @@ function recordToItem(record: CsvRow): Item | null {
     endTimeText,
     endsInHours: parseEndsInHours(endTimeText),
     isFleaMarket: /paypayfleamarket\.yahoo\.co\.jp/i.test(url),
-    conditionText,
     fetchedAt,
     sourceUrl: pick(record, ["取得元ページ", "sourceUrl", "source"]) || "",
     rowIndex: parseNumber(record.__rowIndex) ?? 0,
