@@ -29,10 +29,24 @@ export async function GET() {
       return NextResponse.json(await getFallbackSheets());
     }
 
-    return NextResponse.json(upstream);
+    return NextResponse.json(await mergeWithFallbackSheets(upstream));
   } catch (error) {
     return NextResponse.json(await getFallbackSheets());
   }
+}
+
+async function mergeWithFallbackSheets(upstream: SheetsResponse): Promise<SheetsResponse> {
+  try {
+    const fallback = await fetchGoogleSheetSheets();
+
+    if (fallback.ok) {
+      return mergeSheets(upstream, fallback);
+    }
+  } catch {
+    // GAS is still usable; only skip the supplemental Google Sheets tab list.
+  }
+
+  return upstream;
 }
 
 async function getFallbackSheets(): Promise<SheetsResponse> {
@@ -47,6 +61,27 @@ async function getFallbackSheets(): Promise<SheetsResponse> {
   }
 
   return getMockSheets();
+}
+
+function mergeSheets(primary: SheetsResponse, supplemental: SheetsResponse): SheetsResponse {
+  if (!primary.ok || !supplemental.ok) {
+    return primary;
+  }
+
+  const sheetsByName = new Map<string, { name: string; rows: number }>();
+
+  for (const sheet of [...primary.sheets, ...supplemental.sheets]) {
+    const current = sheetsByName.get(sheet.name);
+    sheetsByName.set(sheet.name, {
+      name: sheet.name,
+      rows: Math.max(current?.rows ?? 0, sheet.rows),
+    });
+  }
+
+  return {
+    ok: true,
+    sheets: Array.from(sheetsByName.values()),
+  };
 }
 
 function isValidSheetsPayload(response: SheetsResponse) {
