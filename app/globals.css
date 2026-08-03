@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #fff7ed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #fff7ed;
+}
+
+body {
+  margin: 0;
+  background: #fff7ed;
+  color: #35261c;
+  font-family:
+    Arial,
+    "Hiragino Kaku Gothic ProN",
+    "Yu Gothic",
+    Meiryo,
+    sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.thin-scrollbar {
+  scrollbar-color: #ead8bf #fff7ed;
+  scrollbar-width: thin;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: #fff7ed;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #ead8bf;
+  border-radius: 8px;
+}
