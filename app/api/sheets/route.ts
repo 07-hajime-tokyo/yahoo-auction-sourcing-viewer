@@ -5,6 +5,7 @@ import { getMockSheets } from "@/lib/mock";
 import type { SheetsResponse } from "@/lib/types";
 
 export const revalidate = 300;
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   if (!hasGasConfig() && !hasGoogleSheetConfig()) {
