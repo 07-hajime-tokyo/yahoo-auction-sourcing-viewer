@@ -352,6 +352,9 @@ export function YahooAuctionViewer() {
               </button>
             ))}
           </div>
+          <div className="mt-1 text-[11px] text-muted">
+            キーボード: Tabで次 / Shift+Tabで前 / ←・→ / Home / End
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-sm">
