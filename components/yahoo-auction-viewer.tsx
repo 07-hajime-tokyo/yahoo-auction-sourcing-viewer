@@ -702,7 +702,7 @@ function ConditionChecklist({
   selectedConditions: ConditionOption[];
   onToggle: (value: ConditionOption, checked: boolean) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const selectedCount = selectedConditions.length;
 
   return (
