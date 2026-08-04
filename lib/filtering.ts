@@ -1,4 +1,4 @@
-import type { Item } from "@/lib/types";
+import type { AiGrade, Item } from "@/lib/types";
 
 export const EXCLUDE_KEYWORDS_STORAGE_KEY = "isa.excludeKeywords";
 
@@ -19,14 +19,26 @@ export const TIME_OPTIONS = [
 ] as const;
 
 export const SORT_OPTIONS = [
+  { value: "gradeAsc", label: "判定順" },
   { value: "totalAsc", label: "総額が安い順" },
   { value: "endsSoon", label: "残り時間が短い順" },
   { value: "bidsAsc", label: "入札数が少ない順" },
   { value: "newFetched", label: "取得日時が新しい順" },
 ] as const;
 
+export const GRADE_FILTER_OPTIONS = [
+  { value: "A", grade: "A", label: "有望" },
+  { value: "B", grade: "B", label: "検討" },
+  { value: "C", grade: "C", label: "要確認" },
+  { value: "D", grade: "D", label: "見送り" },
+  { value: "ungraded", grade: "", label: "未判定" },
+] as const;
+
+export const DEFAULT_GRADE_FILTER_VALUES = ["A", "B", "C", "ungraded"] as const;
+
 export type TimeOption = (typeof TIME_OPTIONS)[number]["value"];
 export type SortOption = (typeof SORT_OPTIONS)[number]["value"];
+export type GradeFilterValue = (typeof GRADE_FILTER_OPTIONS)[number]["value"];
 
 export type Filters = {
   sheet: string;
@@ -36,6 +48,7 @@ export type Filters = {
   maxBids: string;
   excludeKeywords: string;
   includeKeywords: string;
+  gradeValues: GradeFilterValue[];
   excludeFleaMarket: boolean;
   excludeUnknownShipping: boolean;
   sort: SortOption;
@@ -81,6 +94,9 @@ export function parseFilters(
       ? (searchParams.get("exclude") ?? "")
       : serializeKeywords(storedExcludeKeywords ?? DEFAULT_EXCLUDE_KEYWORDS),
     includeKeywords: searchParams.get("include") ?? "",
+    gradeValues: searchParams.has("grade")
+      ? parseGradeFilter(searchParams.get("grade") ?? "")
+      : [...DEFAULT_GRADE_FILTER_VALUES],
     excludeFleaMarket: searchParams.get("excludeFlea") !== "0",
     excludeUnknownShipping: searchParams.get("unknownShipping") === "1",
     sort,
@@ -143,6 +159,46 @@ export function serializeKeywords(keywords: string[]) {
 
 export function normalizeText(input: string) {
   return input.normalize("NFKC").toLowerCase();
+}
+
+export function serializeGradeFilter(values: GradeFilterValue[]) {
+  return normalizeGradeFilter(values).join(",");
+}
+
+export function normalizeGradeFilter(values: readonly string[]) {
+  const allowedValues = new Set<string>(GRADE_FILTER_OPTIONS.map((option) => option.value));
+  const seen = new Set<GradeFilterValue>();
+  const normalizedValues: GradeFilterValue[] = [];
+
+  for (const value of values) {
+    if (!allowedValues.has(value)) {
+      continue;
+    }
+
+    const gradeValue = value as GradeFilterValue;
+
+    if (seen.has(gradeValue)) {
+      continue;
+    }
+
+    seen.add(gradeValue);
+    normalizedValues.push(gradeValue);
+  }
+
+  return normalizedValues;
+}
+
+export function parseGradeFilter(value: string) {
+  return normalizeGradeFilter(value.split(",").map((item) => item.trim()));
+}
+
+export function normalizeAiGrade(value: unknown): AiGrade {
+  return value === "A" || value === "B" || value === "C" || value === "D" ? value : "";
+}
+
+export function toGradeFilterValue(value: unknown): GradeFilterValue {
+  const grade = normalizeAiGrade(value);
+  return grade === "" ? "ungraded" : grade;
 }
 
 export function getEstimatedEndDate(item: Item) {
@@ -227,6 +283,10 @@ function getFilterSteps(filters: Filters): FilterStep[] {
   const timeLimit = TIME_OPTIONS.find((option) => option.value === filters.timeLimit)?.hours ?? null;
   const excludeKeywords = splitKeywords(filters.excludeKeywords);
   const includeKeywords = splitKeywords(filters.includeKeywords);
+  const allGradeValues = GRADE_FILTER_OPTIONS.map((option) => option.value);
+  const selectedGradeValues = normalizeGradeFilter(filters.gradeValues);
+  const gradeFilterActive = selectedGradeValues.length !== allGradeValues.length;
+  const selectedGradeSet = new Set<GradeFilterValue>(selectedGradeValues);
 
   return [
     {
@@ -265,6 +325,11 @@ function getFilterSteps(filters: Filters): FilterStep[] {
         const title = normalizeText(item.title);
         return includeKeywords.some((keyword) => title.includes(keyword));
       },
+    },
+    {
+      label: "判定",
+      active: gradeFilterActive,
+      passes: (item: Item) => selectedGradeSet.has(toGradeFilterValue(item.aiGrade)),
     },
     {
       label: "フリマ除外",
@@ -313,6 +378,16 @@ function sortItems(items: Item[], sort: SortOption) {
   const sorted = [...items];
 
   switch (sort) {
+    case "gradeAsc":
+      return sorted.sort((a, b) => {
+        const gradeDiff = sortableGrade(a.aiGrade) - sortableGrade(b.aiGrade);
+
+        if (gradeDiff !== 0) {
+          return gradeDiff;
+        }
+
+        return sortableNumber(a.totalPrice) - sortableNumber(b.totalPrice);
+      });
     case "endsSoon":
       return sorted.sort((a, b) => sortableEndTime(a) - sortableEndTime(b));
     case "bidsAsc":
@@ -335,4 +410,20 @@ function sortableNumber(value: number | null) {
 
 function sortableEndTime(item: Item) {
   return getEstimatedEndDate(item)?.getTime() ?? Number.POSITIVE_INFINITY;
+}
+
+function sortableGrade(value: unknown) {
+  switch (normalizeAiGrade(value)) {
+    case "A":
+      return 0;
+    case "B":
+      return 1;
+    case "C":
+      return 2;
+    case "":
+      return 3;
+    case "D":
+    default:
+      return 4;
+  }
 }

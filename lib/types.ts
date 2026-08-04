@@ -13,6 +13,8 @@ export type SheetsResponse =
       error: string;
     };
 
+export type AiGrade = "A" | "B" | "C" | "D" | "";
+
 export type Item = {
   title: string;
   url: string;
@@ -28,6 +30,9 @@ export type Item = {
   fetchedAt: string;
   sourceUrl: string;
   rowIndex: number;
+  aiGrade: AiGrade;
+  aiReason: string;
+  aiSpecs: string;
 };
 
 export type ItemsResponse =

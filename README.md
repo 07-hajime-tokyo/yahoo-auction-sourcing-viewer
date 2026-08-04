@@ -66,6 +66,12 @@ UIでチップを追加・削除すると、`localStorage` とURLの両方に反
 
 チェック状態はタブごとに `localStorage` へ保存します。URLクエリには保存せず、表示件数にも影響しません。古いURLに `condition=...` が残っている場合は画面側で削除します。
 
+## 判定
+
+GAS側で付与された `aiGrade` / `aiReason` / `aiSpecs` を読み取り、カードに判定バッジ、理由、仕様メモを表示します。サイト側では判定処理、外部AI呼び出し、書き戻しは行いません。
+
+判定フィルタの既定は `A`, `B`, `C`, 未判定がONで、`D` のみOFFです。`D` もチェックを入れれば表示できます。判定バッジをクリックすると、その判定だけに絞り込めます。
+
 ## URLクエリ
 
 フィルタ状態はURLに保存されます。
@@ -75,11 +81,12 @@ UIでチップを追加・削除すると、`localStorage` とURLの両方に反
 - `minTotal`: 価格下限
 - `hours`: `6` / `24` / `48` / `72`
 - `maxBids`: 入札数の上限
+- `grade`: `A` / `B` / `C` / `D` / `ungraded`
 - `exclude`: 除外キーワード
 - `include`: 含むキーワード
 - `excludeFlea`: `0` のときフリマを含めます。既定では除外します。
 - `unknownShipping`: `1` のとき送料未定を除外します。
-- `sort`: `totalAsc` / `endsSoon` / `bidsAsc` / `newFetched`
+- `sort`: `gradeAsc` / `totalAsc` / `endsSoon` / `bidsAsc` / `newFetched`
 
 `condition` クエリは使いません。
 

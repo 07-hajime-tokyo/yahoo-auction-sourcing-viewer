@@ -1,4 +1,4 @@
-import type { Item, ItemsResponse, SheetsResponse } from "@/lib/types";
+import type { AiGrade, Item, ItemsResponse, SheetsResponse } from "@/lib/types";
 
 const TIMEOUT_MS = 10_000;
 const DEFAULT_GOOGLE_SHEET_ID = "1nXVUKaGbNDDrZp-n4Vl-fK4qU_7TC5yKFYY3ghArItw";
@@ -301,6 +301,7 @@ function recordToItem(record: CsvRow): Item | null {
   const shippingFee = parseShippingFee(shippingText);
   const endTimeText = pick(record, ["endTime", "endTimeText", "残り時間"]);
   const fetchedAt = parseDateLike(pick(record, ["取得日時", "fetchedAt"])) ?? new Date().toISOString();
+  const aiGrade = normalizeRecordGrade(pick(record, ["aiGrade", "AI判定", "判定"]));
 
   return {
     title,
@@ -317,6 +318,9 @@ function recordToItem(record: CsvRow): Item | null {
     fetchedAt,
     sourceUrl: pick(record, ["取得元ページ", "sourceUrl", "source"]) || "",
     rowIndex: parseNumber(record.__rowIndex) ?? 0,
+    aiGrade,
+    aiReason: pick(record, ["aiReason", "AI理由", "判定理由"]) || "",
+    aiSpecs: pick(record, ["aiSpecs", "specs", "AI仕様", "判定詳細"]) || "",
   };
 }
 
@@ -330,6 +334,16 @@ function pick(record: CsvRow, keys: string[]) {
   }
 
   return "";
+}
+
+function normalizeRecordGrade(value: string): AiGrade {
+  const normalizedValue = value.trim().toUpperCase();
+  return normalizedValue === "A" ||
+    normalizedValue === "B" ||
+    normalizedValue === "C" ||
+    normalizedValue === "D"
+    ? normalizedValue
+    : "";
 }
 
 function parseNumber(value: string) {

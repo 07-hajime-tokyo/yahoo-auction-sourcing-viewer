@@ -4,18 +4,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   EXCLUDE_KEYWORDS_STORAGE_KEY,
+  GRADE_FILTER_OPTIONS,
   SORT_OPTIONS,
   TIME_OPTIONS,
   filterAndSortItems,
   getEstimatedEndDate,
   isProbablyEnded,
   normalizeKeywordList,
+  normalizeAiGrade,
   parseKeywordInput,
   parseFilters,
+  serializeGradeFilter,
   serializeKeywords,
+  toGradeFilterValue,
 } from "@/lib/filtering";
-import type { ExcludeKeywordStat } from "@/lib/filtering";
-import type { ApiError, Item, ItemsResponse, SheetInfo, SheetsResponse } from "@/lib/types";
+import type { ExcludeKeywordStat, GradeFilterValue } from "@/lib/filtering";
+import type { AiGrade, ApiError, Item, ItemsResponse, SheetInfo, SheetsResponse } from "@/lib/types";
 
 type LoadingState = "idle" | "loading" | "error";
 
@@ -196,6 +200,7 @@ export function YahooAuctionViewer() {
   );
   const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
   const totalCount = visibleItems.length;
+  const gradeCounts = useMemo(() => getGradeCounts(visibleItems), [visibleItems]);
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
@@ -209,6 +214,30 @@ export function YahooAuctionViewer() {
     updateQuery({ exclude: serializeKeywords(nextKeywords) });
   }
 
+  function updateGradeFilter(values: GradeFilterValue[]) {
+    updateQuery({ grade: serializeGradeFilter(values) });
+  }
+
+  function handleGradeToggle(value: GradeFilterValue, checked: boolean) {
+    const selectedValues = new Set<GradeFilterValue>(filters.gradeValues);
+
+    if (checked) {
+      selectedValues.add(value);
+    } else {
+      selectedValues.delete(value);
+    }
+
+    updateGradeFilter(
+      GRADE_FILTER_OPTIONS.filter((option) => selectedValues.has(option.value)).map(
+        (option) => option.value,
+      ),
+    );
+  }
+
+  function handleGradeOnly(value: GradeFilterValue) {
+    updateGradeFilter([value]);
+  }
+
   function clearFilters() {
     updateQuery({
       maxTotal: null,
@@ -217,6 +246,7 @@ export function YahooAuctionViewer() {
       maxBids: null,
       exclude: "",
       include: null,
+      grade: null,
       excludeFlea: "0",
       unknownShipping: null,
       sort: null,
@@ -399,6 +429,13 @@ export function YahooAuctionViewer() {
           </div>
         </div>
 
+        <GradeFilter
+          selectedValues={filters.gradeValues}
+          counts={gradeCounts}
+          onToggle={handleGradeToggle}
+          onOnly={handleGradeOnly}
+        />
+
         <ExcludeKeywordEditor
           keywords={excludeKeywords}
           baseCount={filtered.excludeKeywordBaseCount}
@@ -454,6 +491,68 @@ function FilterField({ label, children }: { label: string; children: React.React
       <span className="text-xs text-muted">{label}</span>
       {children}
     </label>
+  );
+}
+
+function GradeFilter({
+  selectedValues,
+  counts,
+  onToggle,
+  onOnly,
+}: {
+  selectedValues: GradeFilterValue[];
+  counts: Record<GradeFilterValue, number>;
+  onToggle: (value: GradeFilterValue, checked: boolean) => void;
+  onOnly: (value: GradeFilterValue) => void;
+}) {
+  const selectedSet = new Set<GradeFilterValue>(selectedValues);
+
+  return (
+    <div className="mt-2 rounded-[8px] border border-border bg-panel p-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-text">判定</div>
+        <div className="text-[11px] text-muted">Dは既定で非表示</div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {GRADE_FILTER_OPTIONS.map((option) => {
+          const display = getGradeDisplay(option.grade);
+          const selected = selectedSet.has(option.value);
+
+          return (
+            <div
+              key={option.value}
+              className={[
+                "flex min-h-8 items-center gap-1.5 rounded-[8px] border px-2",
+                selected ? "border-accent/45 bg-accent/10" : "border-border bg-base opacity-65",
+              ].join(" ")}
+            >
+              <input
+                checked={selected}
+                onChange={(event) => onToggle(option.value, event.target.checked)}
+                type="checkbox"
+                aria-label={`${display.label}を表示`}
+                className="h-3.5 w-3.5 shrink-0 accent-accent"
+              />
+              <button
+                type="button"
+                onClick={() => onOnly(option.value)}
+                title={display.tooltip}
+                className={[
+                  "inline-flex items-center gap-1 rounded-[7px] border px-1.5 py-1 text-[11px] leading-none transition hover:brightness-95",
+                  display.className,
+                ].join(" ")}
+              >
+                <span>{display.symbol}</span>
+                <span>{display.label}</span>
+              </button>
+              <span className="text-[11px] text-muted">
+                {counts[option.value].toLocaleString("ja-JP")}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -609,6 +708,8 @@ function ItemCard({ item }: { item: Item }) {
   const ended = isProbablyEnded(item);
   const estimatedEndDate = getEstimatedEndDate(item);
   const urgent = item.endsInHours !== null && item.endsInHours <= 6 && !ended;
+  const gradeDisplay = getGradeDisplay(item.aiGrade);
+  const specs = getDisplaySpecs(item.aiSpecs);
 
   return (
     <article
@@ -638,6 +739,24 @@ function ItemCard({ item }: { item: Item }) {
           {item.isFleaMarket ? <Badge tone="accent">PayPayフリマ</Badge> : null}
           {item.shippingFee === null ? <Badge tone="warning">送料未定</Badge> : null}
           {ended ? <Badge tone="muted">終了推定</Badge> : null}
+        </div>
+
+        <div className="rounded-[8px] border border-border bg-base px-2 py-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <GradePill display={gradeDisplay} />
+            {item.aiReason ? (
+              <span className="min-w-0 flex-1 text-xs text-text">{item.aiReason}</span>
+            ) : null}
+          </div>
+          {specs.length > 0 ? (
+            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-muted">
+              {specs.map((spec) => (
+                <span key={spec.label}>
+                  {spec.label}:{spec.value}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <a
@@ -672,6 +791,164 @@ function ItemCard({ item }: { item: Item }) {
       </div>
     </article>
   );
+}
+
+type GradeDisplay = {
+  grade: AiGrade;
+  symbol: string;
+  label: string;
+  tooltip: string;
+  className: string;
+};
+
+const GRADE_DISPLAYS: Record<AiGrade, GradeDisplay> = {
+  A: {
+    grade: "A",
+    symbol: "◎",
+    label: "有望",
+    tooltip: "動作確認済みで状態に難の記載なし",
+    className: "border-emerald-500/45 bg-emerald-50 text-emerald-700",
+  },
+  B: {
+    grade: "B",
+    symbol: "○",
+    label: "検討",
+    tooltip: "状態情報はあるが懸念あり",
+    className: "border-sky-500/45 bg-sky-50 text-sky-700",
+  },
+  C: {
+    grade: "C",
+    symbol: "△",
+    label: "要確認",
+    tooltip: "商品ページの確認が必要",
+    className: "border-stone-400/60 bg-stone-100 text-stone-700",
+  },
+  D: {
+    grade: "D",
+    symbol: "✕",
+    label: "見送り",
+    tooltip: "状態不良またはジャンク系",
+    className: "border-rose-500/45 bg-rose-50 text-rose-700",
+  },
+  "": {
+    grade: "",
+    symbol: "—",
+    label: "未判定",
+    tooltip: "判定結果がありません",
+    className: "border-border bg-panel text-muted",
+  },
+};
+
+function getGradeDisplay(value: unknown) {
+  return GRADE_DISPLAYS[normalizeAiGrade(value)];
+}
+
+function GradePill({ display }: { display: GradeDisplay }) {
+  return (
+    <span
+      title={display.tooltip}
+      className={`inline-flex items-center gap-1 rounded-[7px] border px-1.5 py-1 text-[11px] font-semibold leading-none ${display.className}`}
+    >
+      <span>{display.symbol}</span>
+      <span>{display.label}</span>
+    </span>
+  );
+}
+
+function getGradeCounts(items: Item[]): Record<GradeFilterValue, number> {
+  const counts = Object.fromEntries(
+    GRADE_FILTER_OPTIONS.map((option) => [option.value, 0]),
+  ) as Record<GradeFilterValue, number>;
+
+  for (const item of items) {
+    counts[toGradeFilterValue(item.aiGrade)] += 1;
+  }
+
+  return counts;
+}
+
+function getDisplaySpecs(value: unknown) {
+  const specs = parseSpecs(value);
+
+  return Object.entries(specs)
+    .map(([key, specValue]) => ({
+      label: toSpecLabel(key),
+      value: toSpecValue(specValue),
+    }))
+    .filter((spec) => spec.value !== "")
+    .slice(0, 6);
+}
+
+function parseSpecs(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || value.trim() === "") {
+    return {};
+  }
+
+  try {
+    const parsedValue: unknown = JSON.parse(value);
+    return parsedValue !== null && typeof parsedValue === "object" && !Array.isArray(parsedValue)
+      ? (parsedValue as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function toSpecLabel(key: string) {
+  const labels: Record<string, string> = {
+    operation: "動作",
+    working: "動作",
+    works: "動作",
+    screen: "画面",
+    display: "画面",
+    upperScreen: "上画面",
+    lowerScreen: "下画面",
+    accessories: "付属",
+    accessory: "付属",
+    body: "本体",
+    box: "箱",
+    charger: "充電器",
+    stylus: "タッチペン",
+  };
+
+  return labels[key] ?? key;
+}
+
+function toSpecValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const normalizedValue = String(value).trim();
+  const lookupKey = normalizedValue.normalize("NFKC").toLowerCase();
+
+  if (lookupKey === "" || lookupKey === "unknown" || lookupKey === "不明" || lookupKey === "情報なし") {
+    return "";
+  }
+
+  const labels: Record<string, string> = {
+    confirmed: "確認済",
+    checked: "確認済",
+    working: "確認済",
+    ok: "確認済",
+    unconfirmed: "未確認",
+    not_checked: "未確認",
+    good: "良好",
+    clean: "良好",
+    issue: "難あり",
+    has_issue: "難あり",
+    included: "あり",
+    yes: "あり",
+    true: "あり",
+    none: "なし",
+    no: "なし",
+    false: "なし",
+    body_only: "本体のみ",
+    scratches: "キズあり",
+    burn: "ヤケあり",
+  };
+
+  return labels[lookupKey] ?? normalizedValue;
 }
 
 function Badge({
