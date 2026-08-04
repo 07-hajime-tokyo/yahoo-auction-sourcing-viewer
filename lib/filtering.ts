@@ -73,7 +73,7 @@ type SearchLike = {
 type FilterStep = {
   label: string;
   active: boolean;
-  kind?: "excludeKeywords";
+  kind?: "excludeKeywords" | "grade";
   passes: (item: Item) => boolean;
 };
 
@@ -106,9 +106,11 @@ export function parseFilters(
 export function filterAndSortItems(items: Item[], filters: Filters) {
   let remaining = [...items];
   const breakdown: FilterBreakdown[] = [];
-  const excludeKeywordBaseItems = getExcludeKeywordBaseItems(items, filters);
+  const filterSteps = getFilterSteps(filters);
+  const excludeKeywordBaseItems = getExcludeKeywordBaseItems(items, filterSteps);
+  const gradeBaseItems = getGradeBaseItems(items, filterSteps);
 
-  for (const step of getFilterSteps(filters)) {
+  for (const step of filterSteps) {
     if (!step.active) {
       continue;
     }
@@ -123,6 +125,7 @@ export function filterAndSortItems(items: Item[], filters: Filters) {
     breakdown,
     excludeKeywordBaseCount: excludeKeywordBaseItems.length,
     excludeKeywordStats: getExcludeKeywordStats(filters, excludeKeywordBaseItems),
+    gradeCounts: getGradeCounts(gradeBaseItems),
   };
 }
 
@@ -229,10 +232,17 @@ export function isProbablyEnded(item: Item, now = new Date()) {
   return estimatedEndDate.getTime() < now.getTime();
 }
 
-function getExcludeKeywordBaseItems(items: Item[], filters: Filters) {
+function getExcludeKeywordBaseItems(items: Item[], filterSteps: FilterStep[]) {
   return applyFilterSteps(
     items,
-    getFilterSteps(filters).filter((step) => step.kind !== "excludeKeywords"),
+    filterSteps.filter((step) => step.kind !== "excludeKeywords"),
+  );
+}
+
+function getGradeBaseItems(items: Item[], filterSteps: FilterStep[]) {
+  return applyFilterSteps(
+    items,
+    filterSteps.filter((step) => step.kind !== "grade"),
   );
 }
 
@@ -329,6 +339,7 @@ function getFilterSteps(filters: Filters): FilterStep[] {
     {
       label: "判定",
       active: gradeFilterActive,
+      kind: "grade",
       passes: (item: Item) => selectedGradeSet.has(toGradeFilterValue(item.aiGrade)),
     },
     {
@@ -410,6 +421,18 @@ function sortableNumber(value: number | null) {
 
 function sortableEndTime(item: Item) {
   return getEstimatedEndDate(item)?.getTime() ?? Number.POSITIVE_INFINITY;
+}
+
+function getGradeCounts(items: Item[]): Record<GradeFilterValue, number> {
+  const counts = Object.fromEntries(
+    GRADE_FILTER_OPTIONS.map((option) => [option.value, 0]),
+  ) as Record<GradeFilterValue, number>;
+
+  for (const item of items) {
+    counts[toGradeFilterValue(item.aiGrade)] += 1;
+  }
+
+  return counts;
 }
 
 function sortableGrade(value: unknown) {

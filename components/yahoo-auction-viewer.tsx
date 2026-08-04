@@ -16,7 +16,6 @@ import {
   parseFilters,
   serializeGradeFilter,
   serializeKeywords,
-  toGradeFilterValue,
 } from "@/lib/filtering";
 import type { ExcludeKeywordStat, GradeFilterValue } from "@/lib/filtering";
 import type { AiGrade, ApiError, Item, ItemsResponse, SheetInfo, SheetsResponse } from "@/lib/types";
@@ -200,7 +199,7 @@ export function YahooAuctionViewer() {
   );
   const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
   const totalCount = visibleItems.length;
-  const gradeCounts = useMemo(() => getGradeCounts(visibleItems), [visibleItems]);
+  const gradeCounts = filtered.gradeCounts;
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
@@ -853,18 +852,6 @@ function GradePill({ display }: { display: GradeDisplay }) {
       <span>{display.label}</span>
     </span>
   );
-}
-
-function getGradeCounts(items: Item[]): Record<GradeFilterValue, number> {
-  const counts = Object.fromEntries(
-    GRADE_FILTER_OPTIONS.map((option) => [option.value, 0]),
-  ) as Record<GradeFilterValue, number>;
-
-  for (const item of items) {
-    counts[toGradeFilterValue(item.aiGrade)] += 1;
-  }
-
-  return counts;
 }
 
 function getDisplaySpecs(value: unknown) {
