@@ -3,6 +3,7 @@ import type { Item, ItemsResponse, SheetsResponse } from "@/lib/types";
 const TIMEOUT_MS = 10_000;
 const DEFAULT_GOOGLE_SHEET_ID = "1nXVUKaGbNDDrZp-n4Vl-fK4qU_7TC5yKFYY3ghArItw";
 const DEFAULT_GOOGLE_SHEET_NAME = "リペア";
+const DEFAULT_GOOGLE_SHEET_NAMES = [DEFAULT_GOOGLE_SHEET_NAME, "New 3DS LL"];
 
 type CsvRow = Record<string, string>;
 
@@ -88,7 +89,7 @@ async function fetchGoogleSheetNames() {
     }
   }
 
-  return [getGoogleSheetName()];
+  return normalizeSheetNames([getGoogleSheetName(), ...DEFAULT_GOOGLE_SHEET_NAMES]);
 }
 
 async function fetchWorksheetFeedSheetNames() {

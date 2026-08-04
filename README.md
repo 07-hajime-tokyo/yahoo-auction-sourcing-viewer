@@ -21,7 +21,7 @@ npm run dev
 既定のGoogle Sheetは次のファイルです。
 
 - Spreadsheet ID: `1nXVUKaGbNDDrZp-n4Vl-fK4qU_7TC5yKFYY3ghArItw`
-- 既定タブ: `リペア`
+- 既定タブ: `リペア`, `New 3DS LL`
 
 `/api/sheets` はスプレッドシートのタブ一覧を再取得します。新しいタブを追加した場合、画面の再読み込みボタンでタブが増えます。自動検出できない場合は `GOOGLE_SHEET_NAMES=リペア,New 3DS LL` のように固定指定できます。
 
