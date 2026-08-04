@@ -198,11 +198,51 @@ export function YahooAuctionViewer() {
     [filters.excludeKeywords],
   );
   const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
-  const totalCount = visibleItems.length;
   const gradeCounts = filtered.gradeCounts;
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
+  }
+
+  function handleSheetTabsKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (availableSheets.length <= 1 || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-sheet-tab='true']"),
+    );
+    const focusedIndex = buttons.findIndex((button) => button === document.activeElement);
+    const selectedIndex = availableSheets.findIndex((sheet) => sheet.name === selectedSheet);
+    const currentIndex = focusedIndex >= 0 ? focusedIndex : Math.max(selectedIndex, 0);
+    let nextIndex: number | null = null;
+
+    if (event.key === "Tab") {
+      nextIndex = event.shiftKey ? currentIndex - 1 : currentIndex + 1;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = currentIndex - 1;
+    } else if (event.key === "ArrowRight") {
+      nextIndex = currentIndex + 1;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = availableSheets.length - 1;
+    }
+
+    if (nextIndex === null) {
+      return;
+    }
+
+    event.preventDefault();
+    const normalizedIndex = (nextIndex + availableSheets.length) % availableSheets.length;
+    const nextSheet = availableSheets[normalizedIndex];
+
+    if (!nextSheet) {
+      return;
+    }
+
+    buttons[normalizedIndex]?.focus();
+    updateQuery({ sheet: nextSheet.name });
   }
 
   function updateExcludeKeywords(keywords: string[]) {
@@ -281,7 +321,12 @@ export function YahooAuctionViewer() {
       <header className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <div className="mb-2 text-xs text-muted">ヤフオク仕入れ候補</div>
-          <div className="thin-scrollbar flex gap-2 overflow-x-auto pb-1">
+          <div
+            className="thin-scrollbar flex gap-2 overflow-x-auto pb-1"
+            onKeyDown={handleSheetTabsKeyDown}
+            role="tablist"
+            aria-label="シート切り替え"
+          >
             {sheetState === "loading" && availableSheets.length === 0 ? (
               <div className="rounded-[8px] border border-border px-3 py-2 text-sm text-muted">
                 シート取得中
@@ -291,6 +336,9 @@ export function YahooAuctionViewer() {
               <button
                 key={sheet.name}
                 type="button"
+                data-sheet-tab="true"
+                role="tab"
+                aria-selected={selectedSheet === sheet.name}
                 onClick={() => updateQuery({ sheet: sheet.name })}
                 className={[
                   "whitespace-nowrap rounded-[8px] border px-3 py-2 text-sm transition",
@@ -308,7 +356,6 @@ export function YahooAuctionViewer() {
 
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <div className="rounded-[8px] border border-border bg-panel px-3 py-2">
-            <span className="text-text">{totalCount.toLocaleString("ja-JP")}件中 </span>
             <span className="text-accent">{filtered.items.length.toLocaleString("ja-JP")}件</span>
             <span className="text-text">を表示</span>
           </div>
