@@ -35,6 +35,12 @@ const CONDITION_OPTIONS = [
 ] as const;
 type ConditionOption = (typeof CONDITION_OPTIONS)[number]["value"];
 type ManualReviewStatus = "candidate" | "rejected";
+type ManualReviewView = "unreviewed" | ManualReviewStatus;
+const MANUAL_REVIEW_VIEW_OPTIONS = [
+  { value: "unreviewed", label: "有望候補" },
+  { value: "candidate", label: "候補" },
+  { value: "rejected", label: "見送り" },
+] as const;
 type ManualReviewRecord = {
   url: string;
   title: string;
@@ -57,7 +63,7 @@ export function YahooAuctionViewer() {
   const searchParams = useSearchParams();
   const [storedExcludeKeywords, setStoredExcludeKeywords] = useState<string[] | undefined>();
   const [itemReviews, setItemReviews] = useState<Record<string, ManualReviewRecord>>({});
-  const [activeReviewTab, setActiveReviewTab] = useState<ManualReviewStatus>("rejected");
+  const [manualReviewView, setManualReviewView] = useState<ManualReviewView>("unreviewed");
   const [conditionChecksBySheet, setConditionChecksBySheet] = useState<
     Record<string, ConditionOption[]>
   >({});
@@ -213,13 +219,24 @@ export function YahooAuctionViewer() {
   const rawItems = itemsResponse?.items ?? [];
   const visibleItems = useMemo(() => rawItems.filter((item) => !isProbablyEnded(item)), [rawItems]);
   const filtered = useMemo(() => filterAndSortItems(visibleItems, filters), [visibleItems, filters]);
+  const manualReviewCounts = useMemo(
+    () => getManualReviewCounts(filtered.items, itemReviews),
+    [filtered.items, itemReviews],
+  );
+  const displayItems = useMemo(
+    () => filterItemsByManualReviewView(filtered.items, itemReviews, manualReviewView),
+    [filtered.items, itemReviews, manualReviewView],
+  );
   const excludeKeywords = useMemo(
     () => parseKeywordInput(filters.excludeKeywords),
     [filters.excludeKeywords],
   );
   const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
   const gradeCounts = filtered.gradeCounts;
-  const reviewRecords = useMemo(() => getSortedReviewRecords(itemReviews), [itemReviews]);
+  const emptyBreakdown = useMemo(
+    () => getEmptyBreakdown(filtered.breakdown, filtered.items.length, manualReviewCounts),
+    [filtered.breakdown, filtered.items.length, manualReviewCounts],
+  );
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
@@ -342,6 +359,18 @@ export function YahooAuctionViewer() {
     status: ManualReviewStatus | null,
     reason?: string,
   ) {
+    const normalizedReason = status === "rejected" ? (reason ?? "").trim() : "";
+
+    if (status === "rejected" && normalizedReason === "") {
+      return;
+    }
+
+    if (status !== null) {
+      setManualReviewView(status);
+    } else if (manualReviewView !== "unreviewed") {
+      setManualReviewView("unreviewed");
+    }
+
     setItemReviews((current) => {
       const nextReviews = { ...current };
 
@@ -364,7 +393,7 @@ export function YahooAuctionViewer() {
         fetchedAt: item.fetchedAt,
         rowIndex: item.rowIndex,
         status,
-        reason: status === "rejected" ? (reason ?? existingReview?.reason ?? "") : "",
+        reason: normalizedReason,
         createdAt: existingReview?.createdAt ?? now,
         updatedAt: now,
       };
@@ -418,7 +447,7 @@ export function YahooAuctionViewer() {
 
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <div className="rounded-[8px] border border-border bg-panel px-3 py-2">
-            <span className="text-accent">{filtered.items.length.toLocaleString("ja-JP")}件</span>
+            <span className="text-accent">{displayItems.length.toLocaleString("ja-JP")}件</span>
             <span className="text-text">を表示</span>
           </div>
           <div className="rounded-[8px] border border-warning/50 bg-warning/10 px-3 py-2 text-warning">
@@ -540,8 +569,11 @@ export function YahooAuctionViewer() {
         <GradeFilter
           selectedValues={filters.gradeValues}
           counts={gradeCounts}
+          manualReviewView={manualReviewView}
+          manualReviewCounts={manualReviewCounts}
           onToggle={handleGradeToggle}
           onOnly={handleGradeOnly}
+          onManualReviewViewChange={setManualReviewView}
         />
 
         <ExcludeKeywordEditor
@@ -570,20 +602,6 @@ export function YahooAuctionViewer() {
         </div>
       </section>
 
-      <ReviewLog
-        activeTab={activeReviewTab}
-        records={reviewRecords}
-        onTabChange={setActiveReviewTab}
-        onRemove={(url) => {
-          setItemReviews((current) => {
-            const nextReviews = { ...current };
-            delete nextReviews[url];
-            writeStoredItemReviews(nextReviews);
-            return nextReviews;
-          });
-        }}
-      />
-
       {error ? (
         <div className="rounded-[8px] border border-warning/60 bg-warning/10 p-4 text-sm text-warning">
           {error}
@@ -592,13 +610,17 @@ export function YahooAuctionViewer() {
 
       {itemsState === "loading" && rawItems.length === 0 ? <LoadingGrid /> : null}
 
-      {itemsState !== "loading" && filtered.items.length === 0 ? (
-        <EmptyState totalCount={visibleItems.length} breakdown={filtered.breakdown} />
+      {itemsState !== "loading" && displayItems.length === 0 ? (
+        manualReviewView === "unreviewed" ? (
+          <EmptyState totalCount={visibleItems.length} breakdown={emptyBreakdown} />
+        ) : (
+          <ManualReviewEmptyState view={manualReviewView} />
+        )
       ) : null}
 
-      {filtered.items.length > 0 ? (
+      {displayItems.length > 0 ? (
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filtered.items.map((item) => (
+          {displayItems.map((item) => (
             <ItemCard
               key={item.url}
               item={item}
@@ -624,13 +646,19 @@ function FilterField({ label, children }: { label: string; children: React.React
 function GradeFilter({
   selectedValues,
   counts,
+  manualReviewView,
+  manualReviewCounts,
   onToggle,
   onOnly,
+  onManualReviewViewChange,
 }: {
   selectedValues: GradeFilterValue[];
   counts: Record<GradeFilterValue, number>;
+  manualReviewView: ManualReviewView;
+  manualReviewCounts: Record<ManualReviewView, number>;
   onToggle: (value: GradeFilterValue, checked: boolean) => void;
   onOnly: (value: GradeFilterValue) => void;
+  onManualReviewViewChange: (view: ManualReviewView) => void;
 }) {
   const selectedSet = new Set<GradeFilterValue>(selectedValues);
 
@@ -676,6 +704,32 @@ function GradeFilter({
                 {counts[option.value].toLocaleString("ja-JP")}
               </span>
             </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
+        <span className="mr-1 text-xs font-semibold text-text">手動仕訳</span>
+        {MANUAL_REVIEW_VIEW_OPTIONS.map((option) => {
+          const selected = manualReviewView === option.value;
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onManualReviewViewChange(option.value)}
+              className={[
+                "min-h-8 rounded-[8px] border px-2 text-xs transition",
+                selected
+                  ? option.value === "rejected"
+                    ? "border-rose-500/55 bg-rose-50 text-rose-700"
+                    : option.value === "candidate"
+                      ? "border-emerald-500/55 bg-emerald-50 text-emerald-700"
+                      : "border-accent/45 bg-accent/10 text-text"
+                  : "border-border bg-base text-muted hover:border-accent/60 hover:text-text",
+              ].join(" ")}
+            >
+              {option.label} {manualReviewCounts[option.value].toLocaleString("ja-JP")}
+            </button>
           );
         })}
       </div>
@@ -831,132 +885,6 @@ function ConditionChecklist({
   );
 }
 
-function ReviewLog({
-  activeTab,
-  records,
-  onTabChange,
-  onRemove,
-}: {
-  activeTab: ManualReviewStatus;
-  records: ManualReviewRecord[];
-  onTabChange: (tab: ManualReviewStatus) => void;
-  onRemove: (url: string) => void;
-}) {
-  const candidateRecords = records.filter((record) => record.status === "candidate");
-  const rejectedRecords = records.filter((record) => record.status === "rejected");
-  const activeRecords = activeTab === "candidate" ? candidateRecords : rejectedRecords;
-  const reasonStats = getRejectReasonStats(rejectedRecords);
-
-  return (
-    <div className="mt-2 rounded-[8px] border border-border bg-panel p-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-xs font-semibold text-text">仕訳記録</div>
-          <div className="mt-0.5 text-[11px] text-muted">このブラウザに保存</div>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            type="button"
-            onClick={() => onTabChange("candidate")}
-            className={[
-              "rounded-[8px] border px-2 py-1.5 text-xs transition",
-              activeTab === "candidate"
-                ? "border-emerald-500/50 bg-emerald-50 text-emerald-700"
-                : "border-border bg-base text-muted hover:border-accent/60 hover:text-text",
-            ].join(" ")}
-          >
-            候補 {candidateRecords.length.toLocaleString("ja-JP")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onTabChange("rejected")}
-            className={[
-              "rounded-[8px] border px-2 py-1.5 text-xs transition",
-              activeTab === "rejected"
-                ? "border-rose-500/50 bg-rose-50 text-rose-700"
-                : "border-border bg-base text-muted hover:border-accent/60 hover:text-text",
-            ].join(" ")}
-          >
-            見送り理由 {rejectedRecords.length.toLocaleString("ja-JP")}
-          </button>
-        </div>
-      </div>
-
-      {activeTab === "rejected" && reasonStats.length > 0 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
-          <span className="text-[11px] text-muted">理由まとめ</span>
-          {reasonStats.map((stat) => (
-            <span
-              key={stat.reason}
-              className="rounded-[8px] border border-border bg-base px-2 py-1 text-[11px] text-text"
-            >
-              {stat.reason} {stat.count.toLocaleString("ja-JP")}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="thin-scrollbar mt-2 max-h-56 overflow-y-auto border-t border-border">
-        {activeRecords.length > 0 ? (
-          activeRecords.map((record) => (
-            <div key={record.url} className="flex min-w-0 gap-2 border-b border-border py-2">
-              {record.imageUrl ? (
-                <a
-                  href={record.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="h-12 w-12 shrink-0 overflow-hidden rounded-[8px] border border-border bg-base"
-                >
-                  <img
-                    src={record.imageUrl}
-                    alt={record.title}
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                </a>
-              ) : null}
-              <div className="min-w-0 flex-1">
-                <a
-                  href={record.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="line-clamp-2 text-xs font-medium leading-4 text-text hover:text-accent"
-                >
-                  {record.title}
-                </a>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-                  <span>{record.sheet || "-"}</span>
-                  <span>{formatYen(record.totalPrice)}</span>
-                  <GradePill display={getGradeDisplay(record.aiGrade)} />
-                  <span>更新 {formatDateTime(record.updatedAt)}</span>
-                </div>
-                {activeTab === "rejected" ? (
-                  <div className="mt-1 text-xs text-text">
-                    理由: {record.reason.trim() || "未入力"}
-                  </div>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => onRemove(record.url)}
-                className="h-7 shrink-0 rounded-[8px] border border-border px-2 text-[11px] text-muted hover:border-accent/60 hover:text-text"
-              >
-                削除
-              </button>
-            </div>
-          ))
-        ) : (
-          <div className="py-3 text-xs text-muted">
-            {activeTab === "candidate"
-              ? "候補に仕訳した商品はまだありません。"
-              : "見送り理由の記録はまだありません。"}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ManualReviewControls({
   item,
   review,
@@ -968,13 +896,46 @@ function ManualReviewControls({
 }) {
   const isCandidate = review?.status === "candidate";
   const isRejected = review?.status === "rejected";
+  const [rejectOpen, setRejectOpen] = useState(isRejected);
+  const [draftReason, setDraftReason] = useState(isRejected ? review.reason : "");
+  const canSaveReject = draftReason.trim().length > 0;
+
+  useEffect(() => {
+    if (isRejected) {
+      setRejectOpen(true);
+      setDraftReason(review.reason);
+    } else if (!review) {
+      setRejectOpen(false);
+      setDraftReason("");
+    }
+  }, [isRejected, review]);
+
+  function saveReject() {
+    if (!canSaveReject) {
+      return;
+    }
+
+    onReviewChange(item, "rejected", draftReason);
+  }
+
+  function handleRejectKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    event.preventDefault();
+    saveReject();
+  }
 
   return (
     <div className="rounded-[8px] border border-border bg-base p-1.5">
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
-          onClick={() => onReviewChange(item, "candidate")}
+          onClick={() => {
+            setRejectOpen(false);
+            onReviewChange(item, "candidate");
+          }}
           className={[
             "h-7 rounded-[8px] border px-2 text-xs transition",
             isCandidate
@@ -982,14 +943,17 @@ function ManualReviewControls({
               : "border-border bg-panel text-muted hover:border-emerald-500/45 hover:text-text",
           ].join(" ")}
         >
-          候補
+          候補に保存
         </button>
         <button
           type="button"
-          onClick={() => onReviewChange(item, "rejected")}
+          onClick={() => {
+            setRejectOpen(true);
+            setDraftReason(isRejected ? review.reason : "");
+          }}
           className={[
             "h-7 rounded-[8px] border px-2 text-xs transition",
-            isRejected
+            isRejected || rejectOpen
               ? "border-rose-500/55 bg-rose-50 text-rose-700"
               : "border-border bg-panel text-muted hover:border-rose-500/45 hover:text-text",
           ].join(" ")}
@@ -999,7 +963,11 @@ function ManualReviewControls({
         {review ? (
           <button
             type="button"
-            onClick={() => onReviewChange(item, null)}
+            onClick={() => {
+              setRejectOpen(false);
+              setDraftReason("");
+              onReviewChange(item, null);
+            }}
             className="h-7 rounded-[8px] border border-border px-2 text-xs text-muted hover:border-accent/60 hover:text-text"
           >
             解除
@@ -1007,14 +975,33 @@ function ManualReviewControls({
         ) : null}
       </div>
 
-      {isRejected ? (
-        <textarea
-          value={review.reason}
-          onChange={(event) => onReviewChange(item, "rejected", event.target.value)}
-          rows={2}
-          placeholder="見送り理由を入力"
-          className="mt-2 min-h-14 w-full resize-y rounded-[8px] border border-border bg-panel px-2 py-1.5 text-xs text-text outline-none placeholder:text-muted focus:border-accent"
-        />
+      {rejectOpen ? (
+        <div className="mt-2">
+          <textarea
+            value={draftReason}
+            onChange={(event) => setDraftReason(event.target.value)}
+            onKeyDown={handleRejectKeyDown}
+            rows={2}
+            placeholder="見送り理由を入力"
+            className="min-h-14 w-full resize-y rounded-[8px] border border-border bg-panel px-2 py-1.5 text-xs text-text outline-none placeholder:text-muted focus:border-accent"
+          />
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] text-muted">Enterで保存 / Shift+Enterで改行</div>
+            <button
+              type="button"
+              onClick={saveReject}
+              disabled={!canSaveReject}
+              className="h-7 rounded-[8px] border border-rose-500/45 bg-rose-50 px-2 text-xs text-rose-700 disabled:cursor-not-allowed disabled:border-border disabled:bg-panel disabled:text-muted"
+            >
+              見送りに保存
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {review ? (
+        <div className="mt-1 text-[11px] text-muted">
+          {isRejected ? "手動仕訳 > 見送り に保存済み" : "手動仕訳 > 候補 に保存済み"}
+        </div>
       ) : null}
     </div>
   );
@@ -1325,6 +1312,21 @@ function EmptyState({
   );
 }
 
+function ManualReviewEmptyState({ view }: { view: ManualReviewStatus }) {
+  return (
+    <section className="rounded-[8px] border border-border bg-panel p-5">
+      <div className="text-base font-semibold text-text">
+        {view === "candidate" ? "候補タブは空です" : "見送りタブは空です"}
+      </div>
+      <div className="mt-2 text-sm text-muted">
+        {view === "candidate"
+          ? "候補に保存した商品がここに表示されます。"
+          : "見送り理由を保存した商品がここに表示されます。"}
+      </div>
+    </section>
+  );
+}
+
 function LoadingGrid() {
   return (
     <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -1366,17 +1368,44 @@ function formatDateTime(value: string) {
   }).format(date);
 }
 
-function getRejectReasonStats(records: ManualReviewRecord[]) {
-  const counts = new Map<string, number>();
+function getManualReviewCounts(
+  items: Item[],
+  records: Record<string, ManualReviewRecord>,
+): Record<ManualReviewView, number> {
+  const counts: Record<ManualReviewView, number> = {
+    unreviewed: 0,
+    candidate: 0,
+    rejected: 0,
+  };
 
-  for (const record of records) {
-    const reason = record.reason.trim() || "理由未入力";
-    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  for (const item of items) {
+    const status = records[item.url]?.status ?? "unreviewed";
+    counts[status] += 1;
   }
 
-  return Array.from(counts.entries())
-    .map(([reason, count]) => ({ reason, count }))
-    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason, "ja-JP"));
+  return counts;
+}
+
+function filterItemsByManualReviewView(
+  items: Item[],
+  records: Record<string, ManualReviewRecord>,
+  view: ManualReviewView,
+) {
+  return items.filter((item) => (records[item.url]?.status ?? "unreviewed") === view);
+}
+
+function getEmptyBreakdown(
+  breakdown: { label: string; removed: number }[],
+  filteredCount: number,
+  manualReviewCounts: Record<ManualReviewView, number>,
+) {
+  const reviewedCount = manualReviewCounts.candidate + manualReviewCounts.rejected;
+
+  if (filteredCount === 0 || reviewedCount === 0) {
+    return breakdown;
+  }
+
+  return [...breakdown, { label: "手動仕訳済み", removed: reviewedCount }];
 }
 
 function getSortedReviewRecords(records: Record<string, ManualReviewRecord>) {
