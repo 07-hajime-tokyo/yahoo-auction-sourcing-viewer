@@ -23,6 +23,7 @@ import type { AiGrade, ApiError, Item, ItemsResponse, SheetInfo, SheetsResponse 
 type LoadingState = "idle" | "loading" | "error";
 
 const CONDITION_CHECKS_STORAGE_PREFIX = "isa.conditionChecks.";
+const ITEM_REVIEWS_STORAGE_KEY = "isa.itemReviews";
 const CONDITION_OPTIONS = [
   { value: "unused", label: "未使用", group: "root" },
   { value: "used", label: "中古", group: "root" },
@@ -33,12 +34,30 @@ const CONDITION_OPTIONS = [
   { value: "poor", label: "全体的に状態が悪い", group: "used" },
 ] as const;
 type ConditionOption = (typeof CONDITION_OPTIONS)[number]["value"];
+type ManualReviewStatus = "candidate" | "rejected";
+type ManualReviewRecord = {
+  url: string;
+  title: string;
+  sheet: string;
+  imageUrl: string;
+  totalPrice: number | null;
+  aiGrade: AiGrade;
+  aiReason: string;
+  fetchedAt: string;
+  rowIndex: number;
+  status: ManualReviewStatus;
+  reason: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export function YahooAuctionViewer() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [storedExcludeKeywords, setStoredExcludeKeywords] = useState<string[] | undefined>();
+  const [itemReviews, setItemReviews] = useState<Record<string, ManualReviewRecord>>({});
+  const [activeReviewTab, setActiveReviewTab] = useState<ManualReviewStatus>("rejected");
   const [conditionChecksBySheet, setConditionChecksBySheet] = useState<
     Record<string, ConditionOption[]>
   >({});
@@ -79,6 +98,7 @@ export function YahooAuctionViewer() {
 
   useEffect(() => {
     setStoredExcludeKeywords(readStoredExcludeKeywords());
+    setItemReviews(readStoredItemReviews());
   }, []);
 
   useEffect(() => {
@@ -199,6 +219,7 @@ export function YahooAuctionViewer() {
   );
   const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
   const gradeCounts = filtered.gradeCounts;
+  const reviewRecords = useMemo(() => getSortedReviewRecords(itemReviews), [itemReviews]);
 
   function handleInputChange(key: string, value: string) {
     updateQuery({ [key]: value === "" ? null : value });
@@ -314,6 +335,44 @@ export function YahooAuctionViewer() {
       ...current,
       [selectedSheet]: nextConditions,
     }));
+  }
+
+  function updateItemReview(
+    item: Item,
+    status: ManualReviewStatus | null,
+    reason?: string,
+  ) {
+    setItemReviews((current) => {
+      const nextReviews = { ...current };
+
+      if (status === null) {
+        delete nextReviews[item.url];
+        writeStoredItemReviews(nextReviews);
+        return nextReviews;
+      }
+
+      const existingReview = current[item.url];
+      const now = new Date().toISOString();
+      const nextReview: ManualReviewRecord = {
+        url: item.url,
+        title: item.title,
+        sheet: selectedSheet,
+        imageUrl: item.imageUrl,
+        totalPrice: item.totalPrice,
+        aiGrade: normalizeAiGrade(item.aiGrade),
+        aiReason: item.aiReason ?? "",
+        fetchedAt: item.fetchedAt,
+        rowIndex: item.rowIndex,
+        status,
+        reason: status === "rejected" ? (reason ?? existingReview?.reason ?? "") : "",
+        createdAt: existingReview?.createdAt ?? now,
+        updatedAt: now,
+      };
+
+      nextReviews[item.url] = nextReview;
+      writeStoredItemReviews(nextReviews);
+      return nextReviews;
+    });
   }
 
   return (
@@ -511,6 +570,20 @@ export function YahooAuctionViewer() {
         </div>
       </section>
 
+      <ReviewLog
+        activeTab={activeReviewTab}
+        records={reviewRecords}
+        onTabChange={setActiveReviewTab}
+        onRemove={(url) => {
+          setItemReviews((current) => {
+            const nextReviews = { ...current };
+            delete nextReviews[url];
+            writeStoredItemReviews(nextReviews);
+            return nextReviews;
+          });
+        }}
+      />
+
       {error ? (
         <div className="rounded-[8px] border border-warning/60 bg-warning/10 p-4 text-sm text-warning">
           {error}
@@ -526,7 +599,12 @@ export function YahooAuctionViewer() {
       {filtered.items.length > 0 ? (
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filtered.items.map((item) => (
-            <ItemCard key={item.url} item={item} />
+            <ItemCard
+              key={item.url}
+              item={item}
+              review={itemReviews[item.url]}
+              onReviewChange={updateItemReview}
+            />
           ))}
         </section>
       ) : null}
@@ -753,7 +831,204 @@ function ConditionChecklist({
   );
 }
 
-function ItemCard({ item }: { item: Item }) {
+function ReviewLog({
+  activeTab,
+  records,
+  onTabChange,
+  onRemove,
+}: {
+  activeTab: ManualReviewStatus;
+  records: ManualReviewRecord[];
+  onTabChange: (tab: ManualReviewStatus) => void;
+  onRemove: (url: string) => void;
+}) {
+  const candidateRecords = records.filter((record) => record.status === "candidate");
+  const rejectedRecords = records.filter((record) => record.status === "rejected");
+  const activeRecords = activeTab === "candidate" ? candidateRecords : rejectedRecords;
+  const reasonStats = getRejectReasonStats(rejectedRecords);
+
+  return (
+    <div className="mt-2 rounded-[8px] border border-border bg-panel p-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-text">仕訳記録</div>
+          <div className="mt-0.5 text-[11px] text-muted">このブラウザに保存</div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => onTabChange("candidate")}
+            className={[
+              "rounded-[8px] border px-2 py-1.5 text-xs transition",
+              activeTab === "candidate"
+                ? "border-emerald-500/50 bg-emerald-50 text-emerald-700"
+                : "border-border bg-base text-muted hover:border-accent/60 hover:text-text",
+            ].join(" ")}
+          >
+            候補 {candidateRecords.length.toLocaleString("ja-JP")}
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange("rejected")}
+            className={[
+              "rounded-[8px] border px-2 py-1.5 text-xs transition",
+              activeTab === "rejected"
+                ? "border-rose-500/50 bg-rose-50 text-rose-700"
+                : "border-border bg-base text-muted hover:border-accent/60 hover:text-text",
+            ].join(" ")}
+          >
+            見送り理由 {rejectedRecords.length.toLocaleString("ja-JP")}
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "rejected" && reasonStats.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
+          <span className="text-[11px] text-muted">理由まとめ</span>
+          {reasonStats.map((stat) => (
+            <span
+              key={stat.reason}
+              className="rounded-[8px] border border-border bg-base px-2 py-1 text-[11px] text-text"
+            >
+              {stat.reason} {stat.count.toLocaleString("ja-JP")}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="thin-scrollbar mt-2 max-h-56 overflow-y-auto border-t border-border">
+        {activeRecords.length > 0 ? (
+          activeRecords.map((record) => (
+            <div key={record.url} className="flex min-w-0 gap-2 border-b border-border py-2">
+              {record.imageUrl ? (
+                <a
+                  href={record.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="h-12 w-12 shrink-0 overflow-hidden rounded-[8px] border border-border bg-base"
+                >
+                  <img
+                    src={record.imageUrl}
+                    alt={record.title}
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                </a>
+              ) : null}
+              <div className="min-w-0 flex-1">
+                <a
+                  href={record.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="line-clamp-2 text-xs font-medium leading-4 text-text hover:text-accent"
+                >
+                  {record.title}
+                </a>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                  <span>{record.sheet || "-"}</span>
+                  <span>{formatYen(record.totalPrice)}</span>
+                  <GradePill display={getGradeDisplay(record.aiGrade)} />
+                  <span>更新 {formatDateTime(record.updatedAt)}</span>
+                </div>
+                {activeTab === "rejected" ? (
+                  <div className="mt-1 text-xs text-text">
+                    理由: {record.reason.trim() || "未入力"}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(record.url)}
+                className="h-7 shrink-0 rounded-[8px] border border-border px-2 text-[11px] text-muted hover:border-accent/60 hover:text-text"
+              >
+                削除
+              </button>
+            </div>
+          ))
+        ) : (
+          <div className="py-3 text-xs text-muted">
+            {activeTab === "candidate"
+              ? "候補に仕訳した商品はまだありません。"
+              : "見送り理由の記録はまだありません。"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ManualReviewControls({
+  item,
+  review,
+  onReviewChange,
+}: {
+  item: Item;
+  review?: ManualReviewRecord;
+  onReviewChange: (item: Item, status: ManualReviewStatus | null, reason?: string) => void;
+}) {
+  const isCandidate = review?.status === "candidate";
+  const isRejected = review?.status === "rejected";
+
+  return (
+    <div className="rounded-[8px] border border-border bg-base p-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => onReviewChange(item, "candidate")}
+          className={[
+            "h-7 rounded-[8px] border px-2 text-xs transition",
+            isCandidate
+              ? "border-emerald-500/55 bg-emerald-50 text-emerald-700"
+              : "border-border bg-panel text-muted hover:border-emerald-500/45 hover:text-text",
+          ].join(" ")}
+        >
+          候補
+        </button>
+        <button
+          type="button"
+          onClick={() => onReviewChange(item, "rejected")}
+          className={[
+            "h-7 rounded-[8px] border px-2 text-xs transition",
+            isRejected
+              ? "border-rose-500/55 bg-rose-50 text-rose-700"
+              : "border-border bg-panel text-muted hover:border-rose-500/45 hover:text-text",
+          ].join(" ")}
+        >
+          見送り
+        </button>
+        {review ? (
+          <button
+            type="button"
+            onClick={() => onReviewChange(item, null)}
+            className="h-7 rounded-[8px] border border-border px-2 text-xs text-muted hover:border-accent/60 hover:text-text"
+          >
+            解除
+          </button>
+        ) : null}
+      </div>
+
+      {isRejected ? (
+        <textarea
+          value={review.reason}
+          onChange={(event) => onReviewChange(item, "rejected", event.target.value)}
+          rows={2}
+          placeholder="見送り理由を入力"
+          className="mt-2 min-h-14 w-full resize-y rounded-[8px] border border-border bg-panel px-2 py-1.5 text-xs text-text outline-none placeholder:text-muted focus:border-accent"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ItemCard({
+  item,
+  review,
+  onReviewChange,
+}: {
+  item: Item;
+  review?: ManualReviewRecord;
+  onReviewChange: (item: Item, status: ManualReviewStatus | null, reason?: string) => void;
+}) {
   const ended = isProbablyEnded(item);
   const estimatedEndDate = getEstimatedEndDate(item);
   const urgent = item.endsInHours !== null && item.endsInHours <= 6 && !ended;
@@ -788,6 +1063,8 @@ function ItemCard({ item }: { item: Item }) {
           {item.isFleaMarket ? <Badge tone="accent">PayPayフリマ</Badge> : null}
           {item.shippingFee === null ? <Badge tone="warning">送料未定</Badge> : null}
           {ended ? <Badge tone="muted">終了推定</Badge> : null}
+          {review?.status === "candidate" ? <Badge tone="accent">手動候補</Badge> : null}
+          {review?.status === "rejected" ? <Badge tone="warning">手動見送り</Badge> : null}
         </div>
 
         <div className="rounded-[8px] border border-border bg-base px-2 py-1.5">
@@ -807,6 +1084,12 @@ function ItemCard({ item }: { item: Item }) {
             </div>
           ) : null}
         </div>
+
+        <ManualReviewControls
+          item={item}
+          review={review}
+          onReviewChange={onReviewChange}
+        />
 
         <a
           href={item.url}
@@ -1081,6 +1364,127 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function getRejectReasonStats(records: ManualReviewRecord[]) {
+  const counts = new Map<string, number>();
+
+  for (const record of records) {
+    const reason = record.reason.trim() || "理由未入力";
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason, "ja-JP"));
+}
+
+function getSortedReviewRecords(records: Record<string, ManualReviewRecord>) {
+  return Object.values(records).sort(
+    (a, b) => toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt),
+  );
+}
+
+function readStoredItemReviews() {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(ITEM_REVIEWS_STORAGE_KEY);
+
+    if (rawValue === null) {
+      return {};
+    }
+
+    const parsedValue: unknown = JSON.parse(rawValue);
+    const values = Array.isArray(parsedValue)
+      ? parsedValue
+      : parsedValue !== null && typeof parsedValue === "object"
+        ? Object.values(parsedValue)
+        : [];
+    const records: Record<string, ManualReviewRecord> = {};
+
+    for (const value of values) {
+      const record = normalizeStoredReviewRecord(value);
+
+      if (record) {
+        records[record.url] = record;
+      }
+    }
+
+    return records;
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredItemReviews(records: Record<string, ManualReviewRecord>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      ITEM_REVIEWS_STORAGE_KEY,
+      JSON.stringify(getSortedReviewRecords(records)),
+    );
+  } catch {
+    // Storage can be unavailable in hardened browser contexts.
+  }
+}
+
+function normalizeStoredReviewRecord(value: unknown): ManualReviewRecord | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const url = toStoredString(record.url);
+  const status = toManualReviewStatus(record.status);
+
+  if (!url || status === null) {
+    return null;
+  }
+
+  const updatedAt = toStoredString(record.updatedAt) || new Date(0).toISOString();
+
+  return {
+    url,
+    title: toStoredString(record.title) || url,
+    sheet: toStoredString(record.sheet),
+    imageUrl: toStoredString(record.imageUrl),
+    totalPrice: toStoredNullableNumber(record.totalPrice),
+    aiGrade: normalizeAiGrade(record.aiGrade),
+    aiReason: toStoredString(record.aiReason),
+    fetchedAt: toStoredString(record.fetchedAt),
+    rowIndex: toStoredNumber(record.rowIndex) ?? 0,
+    status,
+    reason: toStoredString(record.reason),
+    createdAt: toStoredString(record.createdAt) || updatedAt,
+    updatedAt,
+  };
+}
+
+function toManualReviewStatus(value: unknown): ManualReviewStatus | null {
+  return value === "candidate" || value === "rejected" ? value : null;
+}
+
+function toStoredString(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function toStoredNullableNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toStoredNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toTimestamp(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
 function readStoredExcludeKeywords() {
