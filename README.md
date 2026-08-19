@@ -104,7 +104,7 @@ GAS側で付与された `aiGrade` / `aiReason` / `aiSpecs` を読み取り、�
 - GASがHTTP 200で `{ "ok": false, "error": "..." }` を返した場合、Route Handlerは `502` と `{ "error": "..." }` に変換します。
 - GAS/Google Sheets CSVの呼び出しは10秒でタイムアウトします。
 
-`endTimeText` に `終了` を含む商品、または `fetchedAt + endsInHours` から終了済みと推定できる商品は一覧に表示しません。
+`endTimeText` に `終了` を含む商品、または `fetchedAt + endsInHours` から終了済みと推定できる商品は一覧に表示しません。商品ごとの `fetchedAt` がスナップショットの `generatedAt` より1日以上古い場合は、終了推定の基準に `generatedAt` を使います。
 
 ## Vercel デプロイ
 

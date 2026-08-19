@@ -204,32 +204,65 @@ export function toGradeFilterValue(value: unknown): GradeFilterValue {
   return grade === "" ? "ungraded" : grade;
 }
 
-export function getEstimatedEndDate(item: Item) {
-  if (!item.fetchedAt || item.endsInHours === null) {
+const STALE_FETCHED_AT_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+export function getEffectiveFetchedAtDate(
+  item: Pick<Item, "fetchedAt">,
+  snapshotGeneratedAt?: string | null,
+) {
+  const fetchedAt = parseDateValue(item.fetchedAt);
+  const generatedAt = parseDateValue(snapshotGeneratedAt ?? "");
+
+  if (!generatedAt) {
+    return fetchedAt;
+  }
+
+  if (!fetchedAt || generatedAt.getTime() - fetchedAt.getTime() > STALE_FETCHED_AT_THRESHOLD_MS) {
+    return generatedAt;
+  }
+
+  return fetchedAt;
+}
+
+export function getEstimatedEndDate(item: Item, snapshotGeneratedAt?: string | null) {
+  if (item.endsInHours === null) {
     return null;
   }
 
-  const fetchedAt = new Date(item.fetchedAt);
+  const fetchedAt = getEffectiveFetchedAtDate(item, snapshotGeneratedAt);
 
-  if (Number.isNaN(fetchedAt.getTime())) {
+  if (!fetchedAt) {
     return null;
   }
 
   return new Date(fetchedAt.getTime() + item.endsInHours * 60 * 60 * 1000);
 }
 
-export function isProbablyEnded(item: Item, now = new Date()) {
+export function isProbablyEnded(
+  item: Item,
+  now = new Date(),
+  snapshotGeneratedAt?: string | null,
+) {
   if (/終了/.test(normalizeText(item.endTimeText))) {
     return true;
   }
 
-  const estimatedEndDate = getEstimatedEndDate(item);
+  const estimatedEndDate = getEstimatedEndDate(item, snapshotGeneratedAt);
 
   if (!estimatedEndDate) {
     return false;
   }
 
   return estimatedEndDate.getTime() < now.getTime();
+}
+
+function parseDateValue(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function getExcludeKeywordBaseItems(items: Item[], filterSteps: FilterStep[]) {

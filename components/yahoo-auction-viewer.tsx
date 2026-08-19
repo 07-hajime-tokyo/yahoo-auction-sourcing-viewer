@@ -8,6 +8,7 @@ import {
   SORT_OPTIONS,
   TIME_OPTIONS,
   filterAndSortItems,
+  getEffectiveFetchedAtDate,
   getEstimatedEndDate,
   isProbablyEnded,
   normalizeKeywordList,
@@ -217,7 +218,12 @@ export function YahooAuctionViewer() {
   }, [selectedSheet, refreshKey]);
 
   const rawItems = itemsResponse?.items ?? [];
-  const visibleItems = useMemo(() => rawItems.filter((item) => !isProbablyEnded(item)), [rawItems]);
+  const snapshotGeneratedAt = itemsResponse?.generatedAt ?? null;
+  const visibleItems = useMemo(
+    () => rawItems.filter((item) => !isProbablyEnded(item, new Date(), snapshotGeneratedAt)),
+    [rawItems, snapshotGeneratedAt],
+  );
+  const endedHiddenCount = rawItems.length - visibleItems.length;
   const filtered = useMemo(() => filterAndSortItems(visibleItems, filters), [visibleItems, filters]);
   const manualReviewCounts = useMemo(
     () => getManualReviewCounts(filtered.items, itemReviews),
@@ -233,9 +239,16 @@ export function YahooAuctionViewer() {
   );
   const selectedConditions = conditionChecksBySheet[selectedSheet] ?? [];
   const gradeCounts = filtered.gradeCounts;
+  const filterBreakdown = useMemo(
+    () =>
+      endedHiddenCount > 0
+        ? [{ label: "終了推定", removed: endedHiddenCount }, ...filtered.breakdown]
+        : filtered.breakdown,
+    [endedHiddenCount, filtered.breakdown],
+  );
   const emptyBreakdown = useMemo(
-    () => getEmptyBreakdown(filtered.breakdown, filtered.items.length, manualReviewCounts),
-    [filtered.breakdown, filtered.items.length, manualReviewCounts],
+    () => getEmptyBreakdown(filterBreakdown, filtered.items.length, manualReviewCounts),
+    [filterBreakdown, filtered.items.length, manualReviewCounts],
   );
 
   function handleInputChange(key: string, value: string) {
@@ -612,7 +625,7 @@ export function YahooAuctionViewer() {
 
       {itemsState !== "loading" && displayItems.length === 0 ? (
         manualReviewView === "unreviewed" ? (
-          <EmptyState totalCount={visibleItems.length} breakdown={emptyBreakdown} />
+          <EmptyState totalCount={rawItems.length} breakdown={emptyBreakdown} />
         ) : (
           <ManualReviewEmptyState view={manualReviewView} />
         )
@@ -624,6 +637,7 @@ export function YahooAuctionViewer() {
             <ItemCard
               key={item.url}
               item={item}
+              snapshotGeneratedAt={snapshotGeneratedAt}
               review={itemReviews[item.url]}
               onReviewChange={updateItemReview}
             />
@@ -1009,15 +1023,18 @@ function ManualReviewControls({
 
 function ItemCard({
   item,
+  snapshotGeneratedAt,
   review,
   onReviewChange,
 }: {
   item: Item;
+  snapshotGeneratedAt: string | null;
   review?: ManualReviewRecord;
   onReviewChange: (item: Item, status: ManualReviewStatus | null, reason?: string) => void;
 }) {
-  const ended = isProbablyEnded(item);
-  const estimatedEndDate = getEstimatedEndDate(item);
+  const ended = isProbablyEnded(item, new Date(), snapshotGeneratedAt);
+  const effectiveFetchedAt = getEffectiveFetchedAtDate(item, snapshotGeneratedAt);
+  const estimatedEndDate = getEstimatedEndDate(item, snapshotGeneratedAt);
   const urgent = item.endsInHours !== null && item.endsInHours <= 6 && !ended;
   const gradeDisplay = getGradeDisplay(item.aiGrade);
   const specs = getDisplaySpecs(item.aiSpecs);
@@ -1104,7 +1121,7 @@ function ItemCard({
         </div>
 
         <div className="mt-auto text-xs text-muted">
-          取得 {formatDateTime(item.fetchedAt)}
+          取得 {effectiveFetchedAt ? formatDateTime(effectiveFetchedAt.toISOString()) : "-"}
           {estimatedEndDate ? ` / 終了推定 ${formatDateTime(estimatedEndDate.toISOString())}` : ""}
         </div>
       </div>
